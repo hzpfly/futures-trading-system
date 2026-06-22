@@ -1,0 +1,5 @@
+akshare>=1.12.0
+pandas>=2.0
+numpy>=1.24
+flask>=2.3
+tqsdk>=3.7

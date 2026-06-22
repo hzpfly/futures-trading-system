@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>信号监控 - 期货波段策略</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'PingFang SC', sans-serif; background: #0d1117; color: #e6edf3; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  nav { display: flex; gap: 8px; padding: 16px 0; border-bottom: 1px solid #30363d; margin-bottom: 24px; }
+  nav a { color: #8b949e; text-decoration: none; padding: 8px 16px; border-radius: 6px; transition: all .2s; font-size: 15px; }
+  nav a:hover, nav a.active { color: #fff; background: #21262d; }
+  nav .logo { font-size: 20px; font-weight: 700; color: #f0883e; margin-right: 24px; }
+
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 18px; color: #f0883e; margin-bottom: 12px; }
+
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  @media(max-width:900px) { .grid-2,.grid-3 { grid-template-columns: 1fr; } }
+
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; color: #8b949e; font-size: 13px; margin-bottom: 4px; }
+  select, input { padding: 9px 12px; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; font-size: 14px; }
+  select:focus, input:focus { outline: none; border-color: #f0883e; }
+
+  .btn { display: inline-block; padding: 10px 24px; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .2s; }
+  .btn-primary { background: #f0883e; color: #fff; }
+  .btn-primary:hover { background: #d97727; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .controls-row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+  .controls-row .form-group { flex: 1; min-width: 150px; }
+
+  .signal-card { padding: 20px; border-radius: 8px; border-left: 4px solid #30363d; background: #0d1117; }
+  .signal-card.long { border-left-color: #f85149; }
+  .signal-card.short { border-left-color: #3fb950; }
+  .signal-card.flat { border-left-color: #484f58; }
+
+  .signal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .signal-name { font-size: 18px; font-weight: 700; }
+  .signal-action { font-size: 16px; font-weight: 700; padding: 4px 12px; border-radius: 4px; }
+  .signal-action.long { background: #f8514933; color: #f85149; }
+  .signal-action.short { background: #3fb95033; color: #3fb950; }
+  .signal-action.flat { background: #484f5833; color: #8b949e; }
+
+  .signal-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; font-size: 13px; }
+  .signal-details .item { background: #161b22; padding: 8px 12px; border-radius: 4px; }
+  .signal-details .item .k { color: #8b949e; font-size: 11px; }
+  .signal-details .item .v { font-weight: 600; margin-top: 2px; }
+
+  .report { background: #0d1117; padding: 16px; border-radius: 8px; font-family: 'Menlo', 'Consolas', monospace; font-size: 13px; line-height: 1.8; white-space: pre-wrap; color: #8b949e; }
+
+  .chart-box { width: 100%; height: 350px; }
+
+  .timestamp { color: #484f58; font-size: 12px; text-align: right; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+<nav>
+  <span class="logo">📊 期货波段策略</span>
+  <a href="/">总览</a>
+  <a href="/backtest">回测</a>
+  <a href="/optimize">优化</a>
+  <a href="/monitor" class="active">信号</a>
+</nav>
+
+<div class="card">
+  <h2>📡 实时信号扫描</h2>
+  <div class="controls-row">
+    <div class="form-group">
+      <label>策略</label>
+      <select id="strategy">{% for s in strategies %}<option value="{{ s }}" {% if s == 'multi_factor' %}selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+    </div>
+    <div class="form-group" style="flex:0;">
+      <button class="btn btn-primary" id="scanBtn" onclick="scanSignals()">🔍 扫描信号</button>
+    </div>
+  </div>
+</div>
+
+<div id="signalPanel">
+  <div class="card" style="text-align:center;padding:40px;color:#8b949e;">
+    选择策略后点击「扫描信号」查看当前品种的交易信号
+  </div>
+</div>
+
+<div class="card" id="reportCard" style="display:none;">
+  <h2>📝 信号报告</h2>
+  <div class="report" id="reportText"></div>
+</div>
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script>
+async function scanSignals() {
+  const btn = document.getElementById('scanBtn');
+  btn.disabled = true;
+  btn.textContent = '扫描中...';
+
+  const resp = await fetch('/api/monitor', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      strategy: document.getElementById('strategy').value,
+      symbols: ['玉米', '豆粕', '棉花', '白糖', '菜粕'],
+    })
+  });
+
+  btn.disabled = false;
+  btn.textContent = '🔍 扫描信号';
+
+  const data = await resp.json();
+  renderSignals(data.signals, data.report);
+}
+
+function renderSignals(signals, report) {
+  document.getElementById('reportCard').style.display = '';
+  document.getElementById('reportText').textContent = report;
+
+  const panel = document.getElementById('signalPanel');
+  panel.innerHTML = '<div class="grid grid-3">' + Object.entries(signals).map(([name, info]) => {
+    if (info.error) return `<div class="signal-card flat"><div class="signal-header"><span class="signal-name">${name}</span><span class="signal-action flat">异常</span></div><p style="color:#f85149;font-size:13px;">${info.error}</p></div>`;
+
+    const sig = info.signal;
+    const cls = sig === 1 ? 'long' : sig === -1 ? 'short' : 'flat';
+    const action = sig === 1 ? '做多' : sig === -1 ? '做空' : '观望';
+    const ind = info.indicators || {};
+
+    let details = `<div class="item"><div class="k">价格</div><div class="v">${info.price}</div></div>`;
+    details += `<div class="item"><div class="k">ATR</div><div class="v">${info.atr || '-'}</div></div>`;
+    if (ind.rsi !== undefined) details += `<div class="item"><div class="k">RSI</div><div class="v">${ind.rsi}</div></div>`;
+    if (ind.adx !== undefined) details += `<div class="item"><div class="k">ADX</div><div class="v">${ind.adx}</div></div>`;
+    if (ind.momentum !== undefined) details += `<div class="item"><div class="k">动量</div><div class="v">${(ind.momentum * 100).toFixed(2)}%</div></div>`;
+    if (ind.volume_ratio !== undefined) details += `<div class="item"><div class="k">量比</div><div class="v">${ind.volume_ratio}</div></div>`;
+
+    return `<div class="signal-card ${cls}">
+      <div class="signal-header">
+        <span class="signal-name">${name}</span>
+        <span class="signal-action ${cls}">${action}</span>
+      </div>
+      <div class="signal-details">${details}</div>
+      <div class="timestamp">${info.date} ${info.timestamp}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+</script>
+</body>
+</html>

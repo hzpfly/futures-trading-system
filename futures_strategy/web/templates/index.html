@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>期货波段交易策略系统</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #0d1117; color: #e6edf3; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+  /* 导航 */
+  nav { display: flex; gap: 8px; padding: 16px 0; border-bottom: 1px solid #30363d; margin-bottom: 24px; }
+  nav a { color: #8b949e; text-decoration: none; padding: 8px 16px; border-radius: 6px; transition: all .2s; font-size: 15px; }
+  nav a:hover, nav a.active { color: #fff; background: #21262d; }
+  nav .logo { font-size: 20px; font-weight: 700; color: #f0883e; margin-right: 24px; }
+
+  /* 卡片 */
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 18px; color: #f0883e; margin-bottom: 12px; }
+  .card h3 { font-size: 15px; color: #8b949e; margin-bottom: 8px; }
+
+  /* 网格 */
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+  /* 指标数字 */
+  .metric { text-align: center; padding: 16px; }
+  .metric .value { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  .metric .label { font-size: 13px; color: #8b949e; }
+  .value.up { color: #f85149; }
+  .value.down { color: #3fb950; }
+  .value.neutral { color: #8b949e; }
+
+  /* 表单 */
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; color: #8b949e; font-size: 13px; margin-bottom: 4px; }
+  select, input { width: 100%; padding: 10px 12px; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; font-size: 14px; }
+  select:focus, input:focus { outline: none; border-color: #f0883e; }
+
+  /* 按钮 */
+  .btn { display: inline-block; padding: 10px 24px; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .2s; }
+  .btn-primary { background: #f0883e; color: #fff; }
+  .btn-primary:hover { background: #d97727; }
+  .btn-secondary { background: #21262d; color: #e6edf3; }
+  .btn-secondary:hover { background: #30363d; }
+
+  /* 表格 */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #0d1117; color: #8b949e; padding: 10px 12px; text-align: left; border-bottom: 1px solid #30363d; position: sticky; top: 0; }
+  td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+  tr:hover { background: #1c2129; }
+
+  /* 图表容器 */
+  .chart-box { width: 100%; height: 500px; }
+  .chart-box-small { width: 100%; height: 350px; }
+
+  /* 加载动画 */
+  .loading { text-align: center; padding: 40px; color: #8b949e; }
+  .loading::after { content: ''; display: inline-block; width: 20px; height: 20px; border: 2px solid #30363d; border-top-color: #f0883e; border-radius: 50%; animation: spin .8s linear infinite; margin-left: 8px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 信号标记 */
+  .signal-long { color: #f85149; font-weight: 600; }
+  .signal-short { color: #3fb950; font-weight: 600; }
+  .signal-flat { color: #8b949e; }
+
+  /* 信号面板 */
+  .signal-card { padding: 16px; border-left: 3px solid #30363d; }
+  .signal-card.long { border-left-color: #f85149; }
+  .signal-card.short { border-left-color: #3fb950; }
+
+  /* 报告文本 */
+  .report { background: #0d1117; padding: 16px; border-radius: 8px; font-family: 'Menlo', 'Consolas', monospace; font-size: 13px; line-height: 1.8; white-space: pre-wrap; color: #8b949e; }
+
+  /* 响应式 */
+  @media (max-width: 768px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .chart-box { height: 350px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+<nav>
+  <span class="logo">📊 期货波段策略</span>
+  <a href="/" class="active">总览</a>
+  <a href="/backtest">回测</a>
+  <a href="/optimize">优化</a>
+  <a href="/monitor">信号</a>
+</nav>
+
+<div class="grid grid-4">
+  <div class="card metric">
+    <div class="value neutral">5</div>
+    <div class="label">农产品品种</div>
+  </div>
+  <div class="card metric">
+    <div class="value neutral">3</div>
+    <div class="label">策略模型</div>
+  </div>
+  <div class="card metric">
+    <div class="value neutral">--</div>
+    <div class="label">最佳年化收益</div>
+  </div>
+  <div class="card metric">
+    <div class="value neutral">--</div>
+    <div class="label">平均夏普比率</div>
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <div class="card">
+    <h2>📈 策略说明</h2>
+    <table>
+      <tr><th>策略</th><th>类型</th><th>核心逻辑</th></tr>
+      <tr><td>MA Cross</td><td>趋势跟踪</td><td>均线金叉/死叉 + MACD确认 + ATR止损</td></tr>
+      <tr><td>Boll Reversion</td><td>均值回归</td><td>布林带突破 + RSI超买超卖 + 中轨止盈</td></tr>
+      <tr><td>Multi-Factor</td><td>多因子</td><td>趋势+动量+波动率+成交量+ADX 五因子共振</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h2>🌾 覆盖品种</h2>
+    <table>
+      <tr><th>品种</th><th>交易所</th><th>单位</th><th>保证金率</th></tr>
+      <tr><td>玉米 C</td><td>DCE</td><td>10吨/手</td><td>5%</td></tr>
+      <tr><td>豆粕 M</td><td>DCE</td><td>10吨/手</td><td>7%</td></tr>
+      <tr><td>棉花 CF</td><td>CZCE</td><td>5吨/手</td><td>7%</td></tr>
+      <tr><td>白糖 SR</td><td>CZCE</td><td>10吨/手</td><td>7%</td></tr>
+      <tr><td>菜粕 RM</td><td>CZCE</td><td>10吨/手</td><td>7%</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>🚀 快速开始</h2>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;">
+    <a href="/backtest" class="btn btn-primary">开始回测</a>
+    <a href="/optimize" class="btn btn-secondary">参数优化</a>
+    <a href="/monitor" class="btn btn-secondary">信号监控</a>
+  </div>
+</div>
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+</body>
+</html>

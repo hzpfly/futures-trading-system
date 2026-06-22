@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>回测 - 期货波段策略</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'PingFang SC', sans-serif; background: #0d1117; color: #e6edf3; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  nav { display: flex; gap: 8px; padding: 16px 0; border-bottom: 1px solid #30363d; margin-bottom: 24px; }
+  nav a { color: #8b949e; text-decoration: none; padding: 8px 16px; border-radius: 6px; transition: all .2s; font-size: 15px; }
+  nav a:hover, nav a.active { color: #fff; background: #21262d; }
+  nav .logo { font-size: 20px; font-weight: 700; color: #f0883e; margin-right: 24px; }
+
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 18px; color: #f0883e; margin-bottom: 12px; }
+
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: 280px 1fr; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  @media(max-width:900px) { .grid-2 { grid-template-columns: 1fr; } .grid-3,.grid-4 { grid-template-columns: 1fr 1fr; } }
+
+  .metric { text-align: center; padding: 16px; }
+  .metric .value { font-size: 26px; font-weight: 700; margin-bottom: 4px; }
+  .metric .label { font-size: 13px; color: #8b949e; }
+  .value.up { color: #f85149; } .value.down { color: #3fb950; } .value.neutral { color: #58a6ff; }
+
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; color: #8b949e; font-size: 13px; margin-bottom: 4px; }
+  select, input { width: 100%; padding: 9px 12px; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; font-size: 14px; }
+  select:focus, input:focus { outline: none; border-color: #f0883e; }
+
+  .btn { display: inline-block; padding: 10px 24px; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .2s; }
+  .btn-primary { background: #f0883e; color: #fff; width: 100%; }
+  .btn-primary:hover { background: #d97727; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .chart-box { width: 100%; height: 480px; }
+  .chart-box-sm { width: 100%; height: 300px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #0d1117; color: #8b949e; padding: 10px 12px; text-align: left; border-bottom: 1px solid #30363d; position: sticky; top: 0; }
+  td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+  tr:hover { background: #1c2129; }
+  .trade-win { color: #f85149; } .trade-loss { color: #3fb950; }
+
+  .loading { text-align: center; padding: 40px; color: #8b949e; }
+  .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #30363d; border-top-color: #f0883e; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .params-section { display: none; margin-top: 12px; }
+  .params-section.active { display: block; }
+
+  .sidebar { position: sticky; top: 20px; }
+
+  .table-wrap { max-height: 400px; overflow-y: auto; }
+</style>
+</head>
+<body>
+<div class="container">
+<nav>
+  <span class="logo">📊 期货波段策略</span>
+  <a href="/">总览</a>
+  <a href="/backtest" class="active">回测</a>
+  <a href="/optimize">优化</a>
+  <a href="/monitor">信号</a>
+</nav>
+
+<div class="grid grid-2">
+  <!-- 左侧面板 -->
+  <div class="sidebar">
+    <div class="card">
+      <h2>⚙️ 回测参数</h2>
+      <div class="form-group">
+        <label>品种</label>
+        <select id="symbol">
+          {% for s in symbols %}<option value="{{ s }}" {% if s in default_symbols %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>策略</label>
+        <select id="strategy">
+          {% for s in strategies %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>初始资金 (元)</label>
+        <input type="number" id="capital" value="500000">
+      </div>
+      <div class="form-group">
+        <label>仓位比例</label>
+        <input type="number" id="pos_pct" value="0.2" step="0.05" min="0.05" max="1.0">
+      </div>
+      <div class="form-group">
+        <label>滑点 (万分之)</label>
+        <input type="number" id="slippage" value="10" step="1" min="0">
+      </div>
+      <div class="form-group">
+        <label>最大持仓天数</label>
+        <input type="number" id="max_days" value="30" step="5" min="5">
+      </div>
+
+      <button class="btn btn-primary" id="runBtn" onclick="runBacktest()">▶ 运行回测</button>
+    </div>
+  </div>
+
+  <!-- 右侧结果 -->
+  <div id="results">
+    <div class="card" id="perfCard" style="display:none;">
+      <h2>📊 绩效概览</h2>
+      <div class="grid grid-4">
+        <div class="metric"><div class="value" id="totalReturn">--</div><div class="label">总收益率</div></div>
+        <div class="metric"><div class="value" id="annualReturn">--</div><div class="label">年化收益</div></div>
+        <div class="metric"><div class="value" id="maxDD">--</div><div class="label">最大回撤</div></div>
+        <div class="metric"><div class="value" id="sharpe">--</div><div class="label">夏普比率</div></div>
+      </div>
+      <div class="grid grid-4" style="margin-top:8px;">
+        <div class="metric"><div class="value" id="winRate">--</div><div class="label">胜率</div></div>
+        <div class="metric"><div class="value" id="trades">--</div><div class="label">交易次数</div></div>
+        <div class="metric"><div class="value" id="profitFactor">--</div><div class="label">盈亏比</div></div>
+        <div class="metric"><div class="value" id="calmar">--</div><div class="label">卡尔马比率</div></div>
+      </div>
+    </div>
+
+    <div class="card" id="chartCard" style="display:none;">
+      <h2>📈 K线与净值</h2>
+      <div class="chart-box" id="klineChart"></div>
+      <div class="chart-box-sm" id="equityChart" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card" id="tradesCard" style="display:none;">
+      <h2>📋 交易明细</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>入场日</th><th>离场日</th><th>方向</th><th>入场价</th><th>离场价</th><th>盈亏(元)</th><th>收益率%</th><th>天数</th><th>原因</th></tr></thead>
+          <tbody id="tradesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script>
+let klineChart, equityChart;
+
+async function runBacktest() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = '回测中...';
+
+  const resp = await fetch('/api/backtest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: document.getElementById('symbol').value,
+      strategy: document.getElementById('strategy').value,
+      strategy_params: {},
+      backtest_params: {
+        init_capital: +document.getElementById('capital').value,
+        position_pct: +document.getElementById('pos_pct').value,
+        slippage_pct: +document.getElementById('slippage').value / 10000,
+        max_hold_days: +document.getElementById('max_days').value,
+      }
+    })
+  });
+
+  btn.disabled = false;
+  btn.textContent = '▶ 运行回测';
+
+  const data = await resp.json();
+  if (data.error) { alert('回测失败: ' + data.error); return; }
+
+  renderPerformance(data.performance);
+  renderChart(data.chart, data.trades);
+  renderTrades(data.trades);
+}
+
+function renderPerformance(p) {
+  const fmt = (v, suffix='') => v >= 0 ? `<span class="up">+${v}${suffix}</span>` : `<span class="down">${v}${suffix}</span>`;
+  document.getElementById('perfCard').style.display = '';
+  document.getElementById('totalReturn').innerHTML = fmt(p.total_return, '%');
+  document.getElementById('annualReturn').innerHTML = fmt(p.annual_return, '%');
+  document.getElementById('maxDD').innerHTML = fmt(p.max_drawdown, '%');
+  document.getElementById('sharpe').textContent = p.sharpe_ratio;
+  document.getElementById('sharpe').className = 'value ' + (p.sharpe_ratio >= 1 ? 'up' : 'neutral');
+  document.getElementById('winRate').textContent = p.win_rate + '%';
+  document.getElementById('trades').textContent = p.total_trades;
+  document.getElementById('profitFactor').textContent = p.profit_factor;
+  document.getElementById('calmar').textContent = p.calmar_ratio;
+}
+
+function renderChart(chart, trades) {
+  document.getElementById('chartCard').style.display = '';
+
+  // K线图
+  if (!klineChart) klineChart = echarts.init(document.getElementById('klineChart'));
+  const series = [{ type: 'candlestick', data: chart.kline, itemStyle: { color: '#f85149', color0: '#3fb950', borderColor: '#f85149', borderColor0: '#3fb950' }}];
+  if (chart.fast_ma) series.push({ type: 'line', name: '快线', data: chart.fast_ma, smooth: true, lineStyle: { width: 1 }, symbol: 'none' });
+  if (chart.slow_ma) series.push({ type: 'line', name: '慢线', data: chart.slow_ma, smooth: true, lineStyle: { width: 1 }, symbol: 'none' });
+  if (chart.boll_upper) {
+    series.push({ type: 'line', name: '布林上', data: chart.boll_upper, lineStyle: { type: 'dashed', width: 1 }, symbol: 'none' });
+    series.push({ type: 'line', name: '布林中', data: chart.boll_mid, lineStyle: { width: 1 }, symbol: 'none' });
+    series.push({ type: 'line', name: '布林下', data: chart.boll_lower, lineStyle: { type: 'dashed', width: 1 }, symbol: 'none' });
+  }
+
+  // 交易标记
+  const markPoints = [];
+  chart.markers.forEach(m => {
+    const idx = chart.dates.indexOf(m.date);
+    if (idx < 0) return;
+    markPoints.push({
+      coord: [idx, m.price],
+      value: m.type === 'buy' ? '多' : m.type === 'sell' ? '空' : '平',
+      itemStyle: { color: m.type === 'buy' ? '#f85149' : m.type === 'sell' ? '#3fb950' : '#58a6ff' },
+    });
+  });
+  if (markPoints.length) series[0].markPoint = { data: markPoints, symbolSize: 30, label: { fontSize: 10 } };
+
+  // 成交量子图
+  const volSeries = [{
+    type: 'bar', name: '成交量', data: chart.volume, xAxisIndex: 1, yAxisIndex: 1,
+    itemStyle: { color: '#484f58' }
+  }];
+
+  klineChart.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    legend: { top: 5, textStyle: { color: '#8b949e' } },
+    grid: [{ left: 60, right: 20, top: 50, height: '55%' }, { left: 60, right: 20, top: '72%', height: '20%' }],
+    xAxis: [
+      { type: 'category', data: chart.dates, gridIndex: 0, axisLabel: { color: '#8b949e', fontSize: 11 }, splitLine: { show: false } },
+      { type: 'category', data: chart.dates, gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false } },
+    ],
+    yAxis: [
+      { scale: true, gridIndex: 0, axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+      { scale: true, gridIndex: 1, axisLabel: { color: '#8b949e' }, splitLine: { show: false } },
+    ],
+    dataZoom: [{ type: 'inside', xAxisIndex: [0,1], start: 60, end: 100 }],
+    series: [...series, ...volSeries],
+    backgroundColor: 'transparent',
+  }, true);
+
+  // 净值图
+  if (!equityChart) equityChart = echarts.init(document.getElementById('equityChart'));
+  equityChart.setOption({
+    title: { text: '资金净值曲线', textStyle: { color: '#8b949e', fontSize: 13 }, left: 10 },
+    tooltip: { trigger: 'axis' },
+    grid: { left: 80, right: 20, top: 40, bottom: 30 },
+    xAxis: { type: 'category', data: chart.equity_dates, axisLabel: { color: '#8b949e', fontSize: 11 } },
+    yAxis: { scale: true, axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+    series: [{
+      type: 'line', data: chart.equity, smooth: true,
+      lineStyle: { color: '#f0883e', width: 2 }, areaStyle: { color: 'rgba(240,136,62,0.1)' }, symbol: 'none',
+    }],
+    backgroundColor: 'transparent',
+  }, true);
+}
+
+function renderTrades(trades) {
+  document.getElementById('tradesCard').style.display = '';
+  const tbody = document.getElementById('tradesBody');
+  tbody.innerHTML = trades.map(t => {
+    const dir = t.direction === 1 ? '<span class="trade-win">多</span>' : '<span class="trade-loss">空</span>';
+    const pnl = t.pnl >= 0 ? `<span class="trade-win">${t.pnl.toFixed(0)}</span>` : `<span class="trade-loss">${t.pnl.toFixed(0)}</span>`;
+    return `<tr>${dir}<td>${t.entry_date}</td><td>${t.exit_date}</td><td>${t.entry_price.toFixed(2)}</td><td>${t.exit_price.toFixed(2)}</td><td>${pnl}</td><td>${t.pnl_pct.toFixed(2)}%</td><td>${t.hold_days}</td><td>${t.exit_reason}</td></tr>`;
+  }).join('');
+}
+
+window.addEventListener('resize', () => { klineChart && klineChart.resize(); equityChart && equityChart.resize(); });
+</script>
+</body>
+</html>

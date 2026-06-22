@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>参数优化 - 期货波段策略</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'PingFang SC', sans-serif; background: #0d1117; color: #e6edf3; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  nav { display: flex; gap: 8px; padding: 16px 0; border-bottom: 1px solid #30363d; margin-bottom: 24px; }
+  nav a { color: #8b949e; text-decoration: none; padding: 8px 16px; border-radius: 6px; transition: all .2s; font-size: 15px; }
+  nav a:hover, nav a.active { color: #fff; background: #21262d; }
+  nav .logo { font-size: 20px; font-weight: 700; color: #f0883e; margin-right: 24px; }
+
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 18px; color: #f0883e; margin-bottom: 12px; }
+  .card h3 { font-size: 15px; color: #58a6ff; margin-bottom: 8px; }
+
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  @media(max-width:900px) { .grid-2,.grid-3,.grid-4 { grid-template-columns: 1fr 1fr; } }
+
+  .metric { text-align: center; padding: 16px; }
+  .metric .value { font-size: 26px; font-weight: 700; margin-bottom: 4px; }
+  .metric .label { font-size: 13px; color: #8b949e; }
+  .value.up { color: #f85149; } .value.neutral { color: #58a6ff; }
+
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; color: #8b949e; font-size: 13px; margin-bottom: 4px; }
+  select, input { width: 100%; padding: 9px 12px; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; font-size: 14px; }
+  select:focus, input:focus { outline: none; border-color: #f0883e; }
+
+  .btn { display: inline-block; padding: 10px 24px; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .2s; }
+  .btn-primary { background: #f0883e; color: #fff; }
+  .btn-primary:hover { background: #d97727; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #0d1117; color: #8b949e; padding: 10px 12px; text-align: left; border-bottom: 1px solid #30363d; position: sticky; top: 0; }
+  td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+  tr:hover { background: #1c2129; }
+
+  .chart-box { width: 100%; height: 350px; }
+  .table-wrap { max-height: 500px; overflow-y: auto; }
+
+  .plateau-tag { display: inline-block; background: #21262d; padding: 3px 8px; border-radius: 4px; margin: 2px; font-size: 12px; color: #58a6ff; }
+  .badge { display: inline-block; background: #f0883e22; color: #f0883e; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+
+  .controls-row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+  .controls-row .form-group { flex: 1; min-width: 150px; }
+</style>
+</head>
+<body>
+<div class="container">
+<nav>
+  <span class="logo">📊 期货波段策略</span>
+  <a href="/">总览</a>
+  <a href="/backtest">回测</a>
+  <a href="/optimize" class="active">优化</a>
+  <a href="/monitor">信号</a>
+</nav>
+
+<div class="card">
+  <h2>🔧 参数优化 (网格搜索)</h2>
+  <div class="controls-row">
+    <div class="form-group">
+      <label>品种</label>
+      <select id="symbol">{% for s in symbols %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+    </div>
+    <div class="form-group">
+      <label>策略</label>
+      <select id="strategy">{% for s in strategies %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+    </div>
+    <div class="form-group" style="flex:0;">
+      <button class="btn btn-primary" id="runBtn" onclick="runOptimize()">⚡ 开始优化</button>
+    </div>
+  </div>
+</div>
+
+<!-- 最优结果 -->
+<div id="bestResult" style="display:none;">
+  <div class="grid grid-4">
+    <div class="card metric"><div class="value" id="bScore">--</div><div class="label">综合评分</div></div>
+    <div class="card metric"><div class="value up" id="bReturn">--</div><div class="label">年化收益</div></div>
+    <div class="card metric"><div class="value" id="bSharpe">--</div><div class="label">夏普比率</div></div>
+    <div class="card metric"><div class="value" id="bDD">--</div><div class="label">最大回撤</div></div>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <h2>🏆 最优参数</h2>
+      <table id="bestParamsTable"><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>📐 参数高原区</h2>
+      <div id="plateaus"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📊 综合评分分布</h2>
+    <div class="chart-box" id="scoreChart"></div>
+  </div>
+
+  <div class="card">
+    <h2>📋 Top 10 参数组合</h2>
+    <div class="table-wrap">
+      <table><thead><tr><th>排名</th><th>参数</th><th>综合分</th><th>年化%</th><th>夏普</th><th>回撤%</th><th>胜率%</th><th>交易数</th></tr></thead>
+        <tbody id="topBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="loadingMsg" style="display:none;" class="card">
+  <div style="text-align:center;padding:40px;color:#8b949e;">
+    <span style="display:inline-block;width:20px;height:20px;border:2px solid #30363d;border-top-color:#f0883e;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px;"></span>
+    正在搜索最优参数组合，请耐心等待...
+  </div>
+</div>
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+<script>
+let scoreChart;
+const space = {{ optimize_space|safe }};
+
+async function runOptimize() {
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('loadingMsg').style.display = '';
+  document.getElementById('bestResult').style.display = 'none';
+
+  const resp = await fetch('/api/optimize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: document.getElementById('symbol').value,
+      strategy: document.getElementById('strategy').value,
+    })
+  });
+
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('loadingMsg').style.display = 'none';
+
+  const data = await resp.json();
+  if (data.error) { alert('优化失败: ' + data.error); return; }
+
+  renderBest(data.best);
+  renderPlateaus(data.plateaus);
+  renderTop10(data.top10, data.best);
+}
+
+function renderBest(best) {
+  document.getElementById('bestResult').style.display = '';
+  document.getElementById('bScore').textContent = (best.score * 100).toFixed(1);
+  document.getElementById('bReturn').textContent = best.annual_return + '%';
+  document.getElementById('bSharpe').textContent = best.sharpe_ratio;
+  document.getElementById('bDD').textContent = best.max_drawdown + '%';
+
+  // 显示最优参数
+  const strat = document.getElementById('strategy').value;
+  const paramNames = space[strat] ? Object.keys(space[strat]) : [];
+  const tbody = document.getElementById('bestParamsTable');
+  tbody.innerHTML = paramNames.map(k => `<tr><td style="color:#8b949e">${k}</td><td><span class="badge">${best[k]}</span></td></tr>`).join('');
+  tbody.innerHTML += `<tr><td style="color:#8b949e">交易次数</td><td>${best.total_trades}</td></tr>`;
+  tbody.innerHTML += `<tr><td style="color:#8b949e">胜率</td><td>${best.win_rate}%</td></tr>`;
+}
+
+function renderPlateaus(plateaus) {
+  const div = document.getElementById('plateaus');
+  div.innerHTML = Object.values(plateaus).map(p => {
+    const tags = p.unique_values.map(v => `<span class="plateau-tag">${v}</span>`).join('');
+    return `<h3>${p.param}</h3>
+      <p style="font-size:13px;color:#8b949e;margin-bottom:6px;">最优值: <strong style="color:#f0883e">${p.best}</strong>，高原范围: [${p.min}, ${p.max}]，Top20%覆盖: ${p.top_coverage}%</p>
+      <div>${tags}</div>`;
+  }).join('<hr style="border-color:#21262d;margin:12px 0;">');
+}
+
+function renderTop10(top10, best) {
+  const tbody = document.getElementById('topBody');
+  const strat = document.getElementById('strategy').value;
+  const paramNames = space[strat] ? Object.keys(space[strat]) : [];
+  tbody.innerHTML = top10.map((r, i) => {
+    const params = paramNames.map(k => `${k}=${r[k]}`).join(', ');
+    return `<tr><td>#${i+1}</td><td style="font-size:12px;">${params}</td><td><strong>${(r.score*100).toFixed(1)}</strong></td><td style="color:${r.annual_return>=0?'#f85149':'#3fb950'}">${r.annual_return}%</td><td>${r.sharpe_ratio}</td><td>${r.max_drawdown}%</td><td>${r.win_rate}%</td><td>${r.total_trades}</td></tr>`;
+  }).join('');
+
+  // 评分分布图
+  if (!scoreChart) scoreChart = echarts.init(document.getElementById('scoreChart'));
+  const x = top10.map((_, i) => `#${i+1}`);
+  scoreChart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { top: 5, textStyle: { color: '#8b949e' } },
+    grid: { left: 60, right: 60, top: 50, bottom: 30 },
+    xAxis: { type: 'category', data: x, axisLabel: { color: '#8b949e' } },
+    yAxis: [
+      { type: 'value', name: '%', axisLabel: { color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+      { type: 'value', name: 'score', axisLabel: { color: '#8b949e' }, splitLine: { show: false } },
+    ],
+    series: [
+      { name: '年化收益', type: 'bar', data: top10.map(r => r.annual_return), itemStyle: { color: '#f0883e' } },
+      { name: '综合分', type: 'line', yAxisIndex: 1, data: top10.map(r => +(r.score*100).toFixed(1)), lineStyle: { color: '#58a6ff' }, symbol: 'circle', symbolSize: 6 },
+    ],
+    backgroundColor: 'transparent',
+  }, true);
+}
+
+window.addEventListener('resize', () => { scoreChart && scoreChart.resize(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>三重滤网交易系统 — 棉花期货回测报告</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans, -apple-system, system-ui, sans-serif); font-size: 13px; color: var(--color-text-primary, #1a1a1a); background: var(--color-background-tertiary, #f5f5f2); line-height: 1.6; padding: 24px 16px; }
+  h1 { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+  h2 { font-size: 14px; font-weight: 500; margin-bottom: 16px; color: var(--color-text-primary, #1a1a1a); }
+  h3 { font-size: 13px; font-weight: 500; margin-bottom: 12px; }
+  .subtitle { font-size: 13px; color: var(--color-text-secondary, #666); margin-bottom: 24px; }
+  .container { max-width: 900px; margin: 0 auto; }
+  .card { background: var(--color-background-primary, #fff); border-radius: 12px; border: 0.5px solid var(--color-border-tertiary, rgba(0,0,0,0.15)); padding: 20px 24px; margin-bottom: 16px; }
+  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .metric { background: var(--color-background-secondary, #f5f5f2); border-radius: 8px; padding: 12px 14px; }
+  .metric-label { font-size: 11px; color: var(--color-text-secondary, #888); margin-bottom: 4px; }
+  .metric-value { font-size: 22px; font-weight: 500; line-height: 1.2; }
+  .metric-value.positive { color: #C0392B; }
+  .metric-value.negative { color: #1a7a4a; }
+  .metric-value.neutral { color: var(--color-text-primary, #1a1a1a); }
+  .section-label { font-size: 11px; font-weight: 500; color: var(--color-text-secondary, #888); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; }
+  .chart-wrap { position: relative; width: 100%; }
+  .divider { border: none; border-top: 0.5px solid var(--color-border-tertiary, rgba(0,0,0,0.12)); margin: 20px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; font-weight: 500; color: var(--color-text-secondary, #888); padding: 6px 8px; border-bottom: 0.5px solid var(--color-border-tertiary, rgba(0,0,0,0.15)); font-size: 11px; }
+  td { padding: 7px 8px; border-bottom: 0.5px solid var(--color-border-tertiary, rgba(0,0,0,0.1)); }
+  tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .tag-long { background: #FCEAEA; color: #C0392B; }
+  .tag-short { background: #EAF3EA; color: #1a7a4a; }
+  .tag-win { color: #C0392B; font-weight: 500; }
+  .tag-loss { color: #1a7a4a; font-weight: 500; }
+  .progress-bar-wrap { background: var(--color-background-secondary, #f0f0ee); border-radius: 4px; height: 8px; overflow: hidden; margin-top: 4px; }
+  .progress-bar { height: 100%; border-radius: 4px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 600px) { .row2 { grid-template-columns: 1fr; } }
+  .phase-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 0.5px solid var(--color-border-tertiary, rgba(0,0,0,0.1)); }
+  .phase-row:last-child { border-bottom: none; }
+  .phase-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .phase-name { flex: 1; font-size: 12px; }
+  .phase-date { font-size: 11px; color: var(--color-text-secondary, #888); flex: 1.5; }
+  .phase-change { font-weight: 500; font-size: 12px; text-align: right; min-width: 64px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--color-text-secondary, #666); margin-bottom: 10px; }
+  .legend span { display: flex; align-items: center; gap: 4px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+  .insight-box { background: #E6F1FB; border-left: 3px solid #185FA5; padding: 12px 14px; border-radius: 0 8px 8px 0; margin-bottom: 10px; font-size: 12px; color: #0C447C; }
+  .risk-box { background: #FAEEDA; border-left: 3px solid #BA7517; padding: 12px 14px; border-radius: 0 8px 8px 0; font-size: 12px; color: #633806; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div style="margin-bottom: 24px;">
+    <h1>三重滤网交易系统 — 棉花期货回测报告</h1>
+    <p class="subtitle">标的：CF0（棉花主力连续）&nbsp;·&nbsp;回测区间：2025-01-02 至 2026-06-18&nbsp;·&nbsp;初始资金：10 万元</p>
+  </div>
+
+  <div class="card">
+    <p class="section-label">核心绩效指标</p>
+    <div class="metric-grid">
+      <div class="metric">
+        <div class="metric-label">总收益率</div>
+        <div class="metric-value positive">+7.86%</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">总盈亏</div>
+        <div class="metric-value positive">+7,860 元</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">胜率</div>
+        <div class="metric-value neutral">66.7%</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">盈亏比</div>
+        <div class="metric-value neutral">2.45</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">最大回撤</div>
+        <div class="metric-value negative">-5.73%</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">总交易笔数</div>
+        <div class="metric-value neutral">12</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:8px;">
+      <div>
+        <div style="font-size:12px;color:var(--color-text-secondary,#888);margin-bottom:6px;">胜率分布（盈 vs 亏）</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="flex:1;">
+            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
+              <span style="color:#C0392B;">盈利 8 笔</span><span style="color:#1a7a4a;">亏损 4 笔</span>
+            </div>
+            <div class="progress-bar-wrap">
+              <div class="progress-bar" style="width:66.7%;background:#C0392B;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--color-text-secondary,#888);margin-bottom:6px;">多空结构</div>
+        <div style="font-size:11px;margin-bottom:4px;display:flex;justify-content:space-between;">
+          <span>做多 9 笔</span><span style="color:var(--color-text-secondary,#888);">做空 3 笔</span>
+        </div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar" style="width:75%;background:#185FA5;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>资金曲线</h2>
+    <div class="legend">
+      <span><span class="legend-dot" style="background:#185FA5;"></span>净值</span>
+      <span><span class="legend-dot" style="background:#E24B4A;border-radius:50%;"></span>做多入场</span>
+      <span><span class="legend-dot" style="background:#1a7a4a;border-radius:50%;"></span>做空入场</span>
+    </div>
+    <div class="chart-wrap" style="height:260px;">
+      <canvas id="equityChart" role="img" aria-label="三重滤网策略资金曲线折线图">资金曲线图</canvas>
+    </div>
+  </div>
+
+  <div class="row2">
+    <div class="card">
+      <h2>行情阶段分析</h2>
+      <div style="font-size:12px;color:var(--color-text-secondary,#888);margin-bottom:12px;">
+        整体价格从 13,535 元涨至 16,010 元，期间涨幅 <strong>+18.29%</strong>；最低价 12,315（2025-04-09），最高价 16,955（2026-05-06）
+      </div>
+      <div class="phase-row">
+        <div class="phase-dot" style="background:#E24B4A;"></div>
+        <div class="phase-name">下跌趋势</div>
+        <div class="phase-date">2025-01 ~ 2025-04</div>
+        <div class="phase-change" style="color:#1a7a4a;">-3.0%</div>
+      </div>
+      <div class="phase-row">
+        <div class="phase-dot" style="background:#888;"></div>
+        <div class="phase-name">震荡筑底</div>
+        <div class="phase-date">2025-04 ~ 2025-06</div>
+        <div class="phase-change" style="color:#C0392B;">+2.2%</div>
+      </div>
+      <div class="phase-row">
+        <div class="phase-dot" style="background:#C0392B;"></div>
+        <div class="phase-name">反弹上涨</div>
+        <div class="phase-date">2025-07</div>
+        <div class="phase-change" style="color:#C0392B;">+5.8%</div>
+      </div>
+      <div class="phase-row">
+        <div class="phase-dot" style="background:#E24B4A;"></div>
+        <div class="phase-name">再次回调</div>
+        <div class="phase-date">2025-08 ~ 2025-12</div>
+        <div class="phase-change" style="color:#1a7a4a;">-3.3%</div>
+      </div>
+      <div class="phase-row">
+        <div class="phase-dot" style="background:#C0392B;"></div>
+        <div class="phase-name">强势上涨</div>
+        <div class="phase-date">2025-12 ~ 2026-05</div>
+        <div class="phase-change" style="color:#C0392B;">+21.8%</div>
+      </div>
+      <div class="phase-row">
+        <div class="phase-dot" style="background:#E24B4A;"></div>
+        <div class="phase-name">高位回落</div>
+        <div class="phase-date">2026-05 ~ 2026-06</div>
+        <div class="phase-change" style="color:#1a7a4a;">-4.2%</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>各阶段策略表现</h2>
+      <div class="chart-wrap" style="height:220px;">
+        <canvas id="phaseChart" role="img" aria-label="各季度策略盈亏柱状图">各季度盈亏图</canvas>
+      </div>
+      <hr class="divider">
+      <div style="font-size:12px;">
+        <div style="display:flex;justify-content:space-between;padding:4px 0;">
+          <span>平均盈利（每笔）</span><span style="font-weight:500;color:#C0392B;">+1,661 元</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;">
+          <span>平均亏损（每笔）</span><span style="font-weight:500;color:#1a7a4a;">-1,358 元</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;border-top:0.5px solid var(--color-border-tertiary,rgba(0,0,0,0.1));">
+          <span>最大单笔盈利</span><span style="font-weight:500;color:#C0392B;">+6,755 元（2026-01-15）</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;">
+          <span>最大单笔亏损</span><span style="font-weight:500;color:#1a7a4a;">-2,345 元（2025-04-07）</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>成交量趋势分析</h2>
+    <div style="font-size:12px;color:var(--color-text-secondary,#888);margin-bottom:12px;">
+      2026年初成交量大幅放量（1月均量 43万手，同比+90%），预示主力趋势行情启动
+    </div>
+    <div class="chart-wrap" style="height:180px;">
+      <canvas id="volChart" role="img" aria-label="月度平均成交量柱状图">成交量图</canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>全部交易记录</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>入场日期</th>
+          <th>方向</th>
+          <th>入场价</th>
+          <th>出场价</th>
+          <th>盈亏（元）</th>
+          <th>收益率</th>
+          <th>判定</th>
+        </tr>
+      </thead>
+      <tbody id="tradeTable"></tbody>
+    </table>
+  </div>
+
+  <div class="row2">
+    <div class="card">
+      <h2>策略优化建议</h2>
+      <div class="insight-box">
+        <strong>核心驱动笔</strong>：第10笔（2026-01-15 做多）贡献了全部盈利的 86%（+6,755元）。说明策略善于捕捉趋势行情中的主浪段。
+      </div>
+      <div class="insight-box" style="margin-top:10px;">
+        <strong>2025年震荡期</strong>：前9笔交易净盈亏仅 +1,105元，资金在震荡中几乎原地踏步，说明策略在震荡市过滤能力有限。
+      </div>
+      <div class="insight-box" style="margin-top:10px;background:#EAF3DE;border-color:#3B6D11;color:#173404;">
+        <strong>成交量验证</strong>：2026年1月成交量放量，正好触发第10笔做多，量价共振是该笔交易成功的关键因素。建议将成交量放量（当日成交量 &gt; 20日均量的1.5倍）作为第三层滤网补充条件。
+      </div>
+    </div>
+    <div class="card">
+      <h2>风险提示</h2>
+      <div class="risk-box">
+        <strong>1. 样本量偏小</strong>：12笔交易，统计显著性不足，胜率66.7%的置信区间较宽。建议扩大回测周期至3年以上。
+      </div>
+      <div class="risk-box" style="margin-top:10px;">
+        <strong>2. 过拟合风险</strong>：最优参数通过162组网格搜索得出，存在一定过拟合。建议用2022-2024年数据做样本外验证。
+      </div>
+      <div class="risk-box" style="margin-top:10px;">
+        <strong>3. 滑点未计入</strong>：回测采用次日开盘价入场，实盘存在约0.5-1跳的滑点，实际收益略低。
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="font-size:12px;color:var(--color-text-secondary,#666);text-align:center;padding:14px;">
+    数据来源：AkShare / 新浪财经期货行情&nbsp;·&nbsp;参数：MACD(8,24,9) · KD(14,3,3) · 止损3% · 止盈KD&gt;70
+  </div>
+
+</div>
+
+<script>
+const trades = [
+  { no:1, date:'2025-04-07', action:'做空', entry:13255, exit:13720, pnl:-2345, ret:-3.5 },
+  { no:2, date:'2025-07-10', action:'做多', entry:13845, exit:13850, pnl:5, ret:0.0 },
+  { no:3, date:'2025-07-17', action:'做多', entry:13980, exit:14185, pnl:1005, ret:1.5 },
+  { no:4, date:'2025-09-29', action:'做空', entry:13390, exit:13800, pnl:-2070, ret:-3.1 },
+  { no:5, date:'2025-12-11', action:'做多', entry:13760, exit:13850, pnl:430, ret:0.7 },
+  { no:6, date:'2025-12-16', action:'做多', entry:13980, exit:13945, pnl:-195, ret:-0.3 },
+  { no:7, date:'2025-12-22', action:'做多', entry:14045, exit:14535, pnl:2430, ret:3.5 },
+  { no:8, date:'2026-01-05', action:'做多', entry:14600, exit:14655, pnl:255, ret:0.4 },
+  { no:9, date:'2026-01-07', action:'做多', entry:14900, exit:14740, pnl:-820, ret:-1.1 },
+  { no:10, date:'2026-01-15', action:'做多', entry:14840, exit:16195, pnl:6755, ret:9.1 },
+  { no:11, date:'2026-04-28', action:'做多', entry:16430, exit:16715, pnl:1405, ret:1.7 },
+  { no:12, date:'2026-06-08', action:'做空', entry:15970, exit:15765, pnl:1005, ret:1.3 },
+];
+
+const tbody = document.getElementById('tradeTable');
+trades.forEach(t => {
+  const row = document.createElement('tr');
+  const winColor = t.pnl > 0 ? '#C0392B' : (t.pnl < 0 ? '#1a7a4a' : '#888');
+  const winLabel = t.pnl > 0 ? '盈利' : (t.pnl < 0 ? '亏损' : '持平');
+  const winClass = t.pnl > 0 ? 'tag-win' : (t.pnl < 0 ? 'tag-loss' : '');
+  row.innerHTML = `
+    <td style="color:var(--color-text-secondary,#888);">${t.no}</td>
+    <td>${t.date}</td>
+    <td><span class="tag ${t.action==='做多'?'tag-long':'tag-short'}">${t.action}</span></td>
+    <td>${t.entry.toLocaleString()}</td>
+    <td>${t.exit.toLocaleString()}</td>
+    <td class="${winClass}">${t.pnl > 0 ? '+' : ''}${t.pnl.toLocaleString()}</td>
+    <td class="${winClass}">${t.ret > 0 ? '+' : ''}${t.ret.toFixed(1)}%</td>
+    <td style="color:${winColor};font-weight:500;">${winLabel}</td>
+  `;
+  tbody.appendChild(row);
+});
+
+const equityData = [100000, 97655, 97660, 98665, 96595, 97025, 96830, 99260, 99515, 98695, 105450, 106855, 107860];
+const equityLabels = ['初始','T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+new Chart(document.getElementById('equityChart'), {
+  type: 'line',
+  data: {
+    labels: equityLabels,
+    datasets: [{
+      label: '资金净值',
+      data: equityData,
+      borderColor: '#185FA5',
+      backgroundColor: 'rgba(24,95,165,0.07)',
+      borderWidth: 1.5,
+      pointRadius: 4,
+      pointBackgroundColor: equityData.map((v,i) => {
+        if (i === 0) return '#185FA5';
+        return equityData[i] >= equityData[i-1] ? '#C0392B' : '#1a7a4a';
+      }),
+      fill: true,
+      tension: 0.3
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: ctx => `资金: ¥${ctx.parsed.y.toLocaleString()}`
+        }
+      }
+    },
+    scales: {
+      y: {
+        min: 94000,
+        max: 110000,
+        ticks: { callback: v => '¥' + (v/1000).toFixed(0) + 'k', font: { size: 11 } },
+        grid: { color: 'rgba(0,0,0,0.06)' }
+      },
+      x: { ticks: { font: { size: 11 } }, grid: { display: false } }
+    }
+  }
+});
+
+new Chart(document.getElementById('phaseChart'), {
+  type: 'bar',
+  data: {
+    labels: ['2025-Q2','2025-Q3','2025-Q4','2026-Q1','2026-Q2'],
+    datasets: [{
+      label: '盈亏（元）',
+      data: [-2345, -1060, 2665, 6190, 2410],
+      backgroundColor: [-2345, -1060, 2665, 6190, 2410].map(v => v >= 0 ? 'rgba(192,57,43,0.75)' : 'rgba(26,122,74,0.75)'),
+      borderRadius: 4
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      y: {
+        ticks: { callback: v => (v >= 0 ? '+' : '') + v.toLocaleString(), font: { size: 11 } },
+        grid: { color: 'rgba(0,0,0,0.06)' }
+      },
+      x: { ticks: { font: { size: 11 } }, grid: { display: false } }
+    }
+  }
+});
+
+new Chart(document.getElementById('volChart'), {
+  type: 'bar',
+  data: {
+    labels: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月','26-1月','26-2月','26-3月','26-4月','26-5月','26-6月'],
+    datasets: [{
+      label: '月均成交量（手）',
+      data: [224613,231575,203874,250345,196851,190211,244552,189170,245661,213252,193535,266093,430773,375123,422328,473431,540551,391649],
+      backgroundColor: [224613,231575,203874,250345,196851,190211,244552,189170,245661,213252,193535,266093,430773,375123,422328,473431,540551,391649].map((v,i) => i>=12 ? 'rgba(192,57,43,0.8)' : 'rgba(55,138,221,0.5)'),
+      borderRadius: 3
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      y: {
+        ticks: { callback: v => (v/10000).toFixed(0) + '万', font: { size: 11 } },
+        grid: { color: 'rgba(0,0,0,0.06)' }
+      },
+      x: { ticks: { font: { size: 10 }, maxRotation: 45, autoSkip: false }, grid: { display: false } }
+    }
+  }
+});
+</script>
+</body>
+</html>
