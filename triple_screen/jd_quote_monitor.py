@@ -12,7 +12,6 @@ from tqsdk import TqApi, TqAuth
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.header import Header
 import time
 from datetime import datetime, timedelta
 import json
@@ -20,11 +19,12 @@ import os
 
 # ==================== 配置区域 ====================
 
-import os
-
 def load_config():
     """从家目录读取配置文件（避免误提交到仓库）"""
-    import tomllib
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
     config_path = os.path.expanduser("~/.futures_config.toml")
     with open(config_path, "rb") as f:
         return tomllib.load(f)

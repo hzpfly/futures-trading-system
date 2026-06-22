@@ -10,6 +10,7 @@
 import akshare as ak
 import pandas as pd
 import numpy as np
+import os
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
@@ -236,7 +237,7 @@ def run_triple_screen_backtest():
                 position = 0
             
             # 时间止损：持仓超过10天
-            elif (current_date - trades[-1]['date']).days > 10 * 86400e9:  # 约10个交易日
+            elif (current_date - trades[-1]['date']).days > 10:  # 持仓超过10个自然日
                 exit_price = current_close
                 pnl = (exit_price - entry_price) * lot_size * CONTRACT_MULTIPLIER - COMMISSION * 2 * lot_size
                 capital += pnl
@@ -332,7 +333,7 @@ def run_triple_screen_backtest():
         print(f"{t['date'].date()}: {t['action']} @ {t['price']:.0f} => {exit_price}, 盈亏: {pnl:+.0f}")
     
     # 保存详细报告
-    report_path = "/Users/michaelhe/WorkBuddy/Claw/triple_screen_report.txt"
+    report_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports", "triple_screen_report.txt")
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write("三重滤网交易系统回测报告 - 棉花期货(CF)\n")
         f.write("=" * 60 + "\n\n")

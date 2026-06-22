@@ -265,7 +265,7 @@ function renderTrades(trades) {
   tbody.innerHTML = trades.map(t => {
     const dir = t.direction === 1 ? '<span class="trade-win">多</span>' : '<span class="trade-loss">空</span>';
     const pnl = t.pnl >= 0 ? `<span class="trade-win">${t.pnl.toFixed(0)}</span>` : `<span class="trade-loss">${t.pnl.toFixed(0)}</span>`;
-    return `<tr>${dir}<td>${t.entry_date}</td><td>${t.exit_date}</td><td>${t.entry_price.toFixed(2)}</td><td>${t.exit_price.toFixed(2)}</td><td>${pnl}</td><td>${t.pnl_pct.toFixed(2)}%</td><td>${t.hold_days}</td><td>${t.exit_reason}</td></tr>`;
+    return `<tr><td>${dir}</td><td>${t.entry_date}</td><td>${t.exit_date}</td><td>${t.entry_price.toFixed(2)}</td><td>${t.exit_price.toFixed(2)}</td><td>${pnl}</td><td>${t.pnl_pct.toFixed(2)}%</td><td>${t.hold_days}</td><td>${t.exit_reason}</td></tr>`;
   }).join('');
 }
 

@@ -5,6 +5,7 @@
 """
 import akshare as ak
 import pandas as pd
+import os
 from datetime import datetime, timedelta
 
 def get_cotton_futures_history():
@@ -68,7 +69,7 @@ def get_iron_ore_history():
 def save_to_csv(df, filename):
     """保存数据到CSV"""
     if df is not None and len(df) > 0:
-        csv_path = f"/Users/michaelhe/WorkBuddy/Claw/{filename}"
+        csv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", filename)
         df.to_csv(csv_path, index=False, encoding='utf-8-sig')
         print(f"\n✅ 数据已保存到: {csv_path}")
         return csv_path

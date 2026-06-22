@@ -10,6 +10,7 @@
 import akshare as ak
 import pandas as pd
 import numpy as np
+import os
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
@@ -304,7 +305,7 @@ def run_detailed_backtest():
               f"{exit_price}, 盈亏: {pnl:+,.0f} ({return_pct:+.1f}%)")
     
     # 保存报告
-    report_path = "/Users/michaelhe/WorkBuddy/Claw/triple_screen_optimized_report.txt"
+    report_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports", "triple_screen_optimized_report.txt")
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write("三重滤网交易系统 - 最优参数回测报告\n")
         f.write("=" * 70 + "\n\n")
