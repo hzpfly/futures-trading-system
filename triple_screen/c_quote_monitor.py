@@ -23,9 +23,9 @@ import os
 import os
 
 def load_config():
-    """从config.toml读取配置"""
+    """从家目录读取配置文件（避免误提交到仓库）"""
     import tomllib
-    config_path = os.path.join(os.path.dirname(__file__), "config.toml")
+    config_path = os.path.expanduser("~/.futures_config.toml")
     with open(config_path, "rb") as f:
         return tomllib.load(f)
 
