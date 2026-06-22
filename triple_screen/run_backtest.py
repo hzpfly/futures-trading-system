@@ -3,11 +3,12 @@
 三重滤网策略 - 统一回测入口
 ==============================
 
-支持四个版本:
+支持五个版本:
   v0  - 原始二层版 (MACD(8,24,9) + KD金叉)
   v1  - 三层版 (v0 + 60分钟精细择时)
-  v2  - 动力系统版 (EMA(13) + MACD柱颜色变化)
+  v2  - 动力系统版 (L1=周线MACD, L2=日线动力系统)
   v3  - 短周期版 (日-小时-15分钟, 交易次数多但需优化)
+  v4  - 双层动力系统版 (L1=周线动力系统, L2=日线动力系统, L3=60分钟)
 
 用法:
   python run_backtest.py v0        # 运行v0
@@ -15,7 +16,8 @@
   python run_backtest.py v2        # 运行v2
   python run_backtest.py v3        # 运行v3 (KD版)
   python run_backtest.py v3i       # 运行v3 (动力系统版)
-  python run_backtest.py compare    # 四版本对比
+  python run_backtest.py v4        # 运行v4
+  python run_backtest.py compare    # 五版本对比
   python run_backtest.py all       # 依次运行全部
 """
 import sys
@@ -29,32 +31,39 @@ STRATEGIES = {
         'name': '原始二层版',
         'file': 'triple_screen_optimized.py',
         'desc': 'MACD(8,24,9) + KD(14,3,3) 金叉进场, KD>70止盈',
-        'func': 'run_backtest',
+        'func': 'run_detailed_backtest',
     },
     'v1': {
         'name': '三层版',
         'file': 'triple_screen_3layer.py',
         'desc': 'v0 + 60分钟精细择时, 避免追高杀低',
-        'func': 'run_backtest',
+        'func': 'run_3layer_backtest',
     },
     'v2': {
         'name': '动力系统版',
         'file': 'triple_screen_impulse_v2.py',
-        'desc': 'EMA(13)+MACD柱颜色变化进场, 动能衰竭即出场',
-        'func': 'run_backtest',
+        'desc': 'L1=周线MACD斜率, L2=日线EMA(13)+MACD柱颜色变化进场',
+        'func': 'run_v2_backtest',
     },
     'v3': {
-        'name': '短周期KD版',
+        'name': '短周期版(KD)',
         'file': 'triple_screen_v3.py',
-        'desc': '日-小时-15分钟, L2=KD, 交易次数多(需优化)',
-        'func': 'run_backtest',
+        'desc': '日-小时-15分钟, KD金叉, 交易次数多（需优化）',
+        'func': 'run_v3_backtest',
+        'args': {'use_impulse': False},
     },
     'v3i': {
-        'name': '短周期动力系统版',
+        'name': '短周期版(动力)',
         'file': 'triple_screen_v3.py',
-        'desc': '日-小时-15分钟, L2=动力系统, 交易次数多(需优化)',
-        'func': 'run_backtest',
-        'impulse': True,
+        'desc': '日-小时-15分钟, 动力系统, 交易次数多（需优化）',
+        'func': 'run_v3_backtest',
+        'args': {'use_impulse': True},
+    },
+    'v4': {
+        'name': '双层动力系统版',
+        'file': 'triple_screen_v4.py',
+        'desc': 'L1=周线动力系统, L2=日线动力系统, L3=60分钟精细择时',
+        'func': 'run_v4_backtest',
     },
 }
 
@@ -77,51 +86,37 @@ def run_version(version_key):
     spec.loader.exec_module(module)
 
     # 调用对应版本的回测函数
-    kwargs = {}
-    if version_key == 'v3' or version_key == 'v3i':
-        kwargs['use_impulse'] = info.get('impulse', False)
-        trades, equity = module.run_backtest(**kwargs)
-    elif version_key == 'v0':
-        trades, equity = module.run_detailed_backtest()
-    elif version_key == 'v1':
-        trades, equity = module.run_3layer_backtest()
-    elif version_key == 'v2':
-        trades, equity = module.run_v2_backtest()
+    func_name = info['func']
+    func = getattr(module, func_name)
+    args = info.get('args', {})
+    trades, equity = func(**args)
 
     return trades, equity
 
 
 def compare_versions():
-    """四版本对比摘要"""
+    """五版本对比摘要"""
     import pandas as pd
     import importlib.util
 
     results = []
 
-    for key in ['v0', 'v1', 'v2', 'v3', 'v3i']:
+    for key in ['v0', 'v1', 'v2', 'v3', 'v4']:
         info = STRATEGIES[key]
         file_path = os.path.join(PROJECT_ROOT, 'triple_screen', info['file'])
         spec = importlib.util.spec_from_file_location(info['file'], file_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        # 捕获输出并提取关键指标
         import io
         from contextlib import redirect_stdout
 
         f = io.StringIO()
         with redirect_stdout(f):
-            if key == 'v0':
-                trades, equity = module.run_detailed_backtest()
-            elif key == 'v1':
-                trades, equity = module.run_3layer_backtest()
-            elif key == 'v2':
-                trades, equity = module.run_v2_backtest()
-            elif key in ['v3', 'v3i']:
-                use_impulse = info.get('impulse', False)
-                result = module.run_backtest(use_impulse=use_impulse)
-                trades = result.get('trades', [])
-                equity = result.get('return', 0)
+            func_name = info['func']
+            func = getattr(module, func_name)
+            args = info.get('args', {})
+            trades, equity = func(**args)
 
         output = f.getvalue()
 
@@ -131,37 +126,56 @@ def compare_versions():
 
         for line in lines:
             if '总收益率' in line:
-                result['return'] = float(line.split(':')[1].strip().replace('%', '').replace('+', ''))
+                try:
+                    result['return'] = float(line.split(':')[1].strip().replace('%', '').replace('+', ''))
+                except:
+                    result['return'] = 0
             elif '胜率' in line and '交易统计' not in line:
-                result['win_rate'] = float(line.split(':')[1].strip().replace('%', ''))
+                try:
+                    result['win_rate'] = float(line.split(':')[1].strip().replace('%', ''))
+                except:
+                    result['win_rate'] = 0
             elif '盈亏比' in line:
-                result['profit_factor'] = float(line.split(':')[1].strip())
+                try:
+                    result['profit_factor'] = float(line.split(':')[1].strip())
+                except:
+                    result['profit_factor'] = 0
             elif '最大回撤' in line:
-                result['max_dd'] = float(line.split(':')[1].strip().replace('%', ''))
-            elif '交易次数' in line:
-                result['trades'] = int(line.split(':')[1].strip())
+                try:
+                    result['max_dd'] = float(line.split(':')[1].strip().replace('%', ''))
+                except:
+                    result['max_dd'] = 0
+            elif '总交易次数' in line:
+                try:
+                    result['trades'] = int(line.split(':')[1].strip())
+                except:
+                    result['trades'] = 0
 
         results.append(result)
 
     # 输出对比表
-    print("\n" + "=" * 80)
-    print("四版本回测对比 (2024-01 ~ 2026-06, 棉花CF0)")
-    print("=" * 80)
-    print(f"\n{'版本':<6} {'名称':<20} {'收益率':>8} {'胜率':>6} {'盈亏比':>6} {'最大回撤':>8} {'交易次数':>6}")
-    print("-" * 80)
+    print("\n" + "="*90)
+    print("五版本回测对比 (2025-01 ~ 2026-06, 棉花CF0)")
+    print("="*90)
+    print(f"\n{'版本':<6} {'名称':<18} {'收益率':>8} {'胜率':>6} {'盈亏比':>6} {'最大回撤':>8} {'交易次数':>6}")
+    print("-" * 90)
 
     for r in results:
-        print(f"{r['version']:<6} {r['name']:<20} {r.get('return','?'):>7.2f}% "
-              f"{r.get('win_rate','?'):>5.1f}% {r.get('profit_factor','?'):>5.2f}  "
-              f"{r.get('max_dd','?'):>7.2f}% {r.get('trades','?'):>6}")
+        ret = r.get('return', 0)
+        wr = r.get('win_rate', 0)
+        pf = r.get('profit_factor', 0)
+        md = r.get('max_dd', 0)
+        t = r.get('trades', 0)
+        print(f"{r['version']:<6} {r['name']:<18} {ret:>7.2f}% "
+              f"{wr:>5.1f}% {pf:>5.2f}  "
+              f"{md:>7.2f}% {t:>6}")
 
     print("\n推荐:")
     best_return = max(results, key=lambda x: x.get('return', -999))
-    # 最大回撤是负值，找最接近0的（即 max_dd 最大）
-    best_dd = max(results, key=lambda x: x.get('max_dd', -999))
+    best_dd = max(results, key=lambda x: x.get('max_dd', -999))  # max_dd是负值,找最大(最接近0)
     print(f"  最高收益: {best_return['version']} ({best_return['name']})")
     print(f"  最小回撤: {best_dd['version']} ({best_dd['name']})")
-    print("=" * 80)
+    print("="*90)
 
 
 if __name__ == '__main__':
@@ -176,12 +190,12 @@ if __name__ == '__main__':
     if version == 'compare':
         compare_versions()
     elif version == 'all':
-        for k in ['v0', 'v1', 'v2', 'v3', 'v3i']:
+        for k in ['v0', 'v1', 'v2', 'v3', 'v4']:
             run_version(k)
-            print("\n" + "=" * 60)
+            print("\n" + "="*60)
     elif version in STRATEGIES:
         run_version(version)
     else:
         print(f"未知版本: {version}")
-        print("支持: v0, v1, v2, v3, v3i, compare, all")
+        print("支持: v0, v1, v2, v3, v3i, v4, compare, all")
         sys.exit(1)
