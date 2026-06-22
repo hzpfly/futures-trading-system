@@ -80,7 +80,7 @@ def get_15min(symbol, start, end):
 
 
 # ── 回测 ──────────────────────────────────────────────────────
-def run_backtest(symbol="CF0", start_date="20240101", end_date="20260622",
+def run_v3_backtest(symbol="CF0", start_date="20240101", end_date="20260622",
                  stop_pct=3.0, take_pct=6.0, use_impulse=False):
     """
     V3 回测: 日-小时-15分钟
@@ -320,5 +320,5 @@ if __name__ == "__main__":
     p.add_argument("--end", default="20260622")
     p.add_argument("--impulse", action="store_true", help="使用动力系统(L2)")
     args = p.parse_args()
-    run_backtest(symbol=args.symbol, start_date=args.start, end_date=args.end,
+    run_v3_backtest(symbol=args.symbol, start_date=args.start, end_date=args.end,
                  use_impulse=args.impulse)
