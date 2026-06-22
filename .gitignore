@@ -26,6 +26,8 @@ logs/
 # Secrets（账号密码不上传）
 config/secrets.toml
 config/local_settings.py
+config.toml
+triple_screen/config.toml
 
 # OS
 .DS_Store

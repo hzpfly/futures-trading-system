@@ -95,7 +95,7 @@ python triple_screen/get_history_akshare.py
 ## 数据来源
 
 - **AkShare**（首选）：免费，无需账号，盘后即可获取。棉花/铁矿石均支持。
-- **TqSdk**：实时行情（仅交易时段）。账号：`hzpfly`，使用 `TqAuth` 认证。
+- **TqSdk**：实时行情（仅交易时段）。配置账号密码见 `triple_screen/config.toml`（需自行创建，参考 `config.toml.example`）。
 - **Tushare**：备用，需配置 Token（`export TUSHARE_TOKEN="xxx"`）。
 
 ## 合约代码

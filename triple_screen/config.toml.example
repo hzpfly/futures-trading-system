@@ -1,0 +1,20 @@
+# 配置文件模板 - 复制为 config.toml 并填写真实值
+# 注意：config.toml 已加入 .gitignore，不会被提交到仓库
+
+# TQSdk 天勤量化账户（https://www.shinnytech.com/）
+[tqsdk]
+username = "your_tqsdk_username"
+password = "your_tqsdk_password"
+
+# QQ邮箱 SMTP 配置（用于行情预警邮件）
+[smtp]
+server   = "smtp.qq.com"
+port     = 465
+use_ssl  = true
+username = "your_qq_email@qq.com"
+auth_code = "your_qq_smtp_auth_code"  # QQ邮箱授权码（非QQ密码）
+
+# 邮件收件人（可多个，用逗号分隔写成数组）
+[smtp.receivers]
+jd = ["receiver@example.com"]   # 鸡蛋期货预警收件人
+c  = ["receiver@example.com"]   # 玉米期货预警收件人
