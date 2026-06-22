@@ -6,16 +6,18 @@
 
 ```
 futures-trading-system/
-├── triple_screen/                # 三重滤网策略（三个版本）
+├── triple_screen/                # 三重滤网策略（六个版本）
 │   ├── triple_screen_optimized.py   # V0: 原始二层版
 │   ├── triple_screen_3layer.py      # V1: 三层版（60分钟精细择时）
 │   ├── triple_screen_impulse_v2.py  # V2: 动力系统版
-│   ├── run_backtest.py             # 统一回测入口（支持三版本对比）
+│   ├── triple_screen_v3.py          # V3: 短周期版（日-小时-15分钟）
+│   ├── triple_screen_v4.py          # V4: 双层动力系统版
+│   ├── triple_screen_v5.py          # V5: 短周期双层动力系统版
+│   ├── run_backtest.py             # 统一回测入口（支持六版本对比）
 │   ├── triple_screen_optimize.py    # 参数优化网格搜索
 │   ├── triple_screen_akshare.py     # 初始版本（基础逻辑）
 │   ├── backtest_from_parquet.py     # 基于本地Parquet数据的回测
 │   ├── triple_screen_tqsdk.py      # TqSdk数据源版回测
-│   ├── get_history_akshare.py       # AkShare历史数据获取工具
 │   ├── fetch_tick_data.py           # TqSdk Tick数据实时采集器
 │   ├── view_ticks.py               # 命令行Tick数据查看器
 │   ├── maintain_data.py             # Tick数据维护（归档/合并/清理）
@@ -35,7 +37,9 @@ futures-trading-system/
 │   ├── web/app.py              # Flask Web看板
 │   └── utils/indicators.py    # 指标库
 │
-├── data/                       # 历史数据
+├── docs/                       # 策略文档
+│   └── strategy_comparison.md  # 六版本详细对比（含代码对照）
+├── data/                       # 历史数据（不上传Git）
 │   ├── kline/                 # K线历史数据（Parquet，不上传Git）
 │   └── ticks/                # Tick逐笔数据（Parquet，不上传Git）
 │
@@ -44,7 +48,9 @@ futures-trading-system/
 
 ---
 
-## 三重滤网策略 - 三个版本
+## 三重滤网策略 - 六个版本
+
+> 📖 **详细逻辑对照代码实现** → [docs/strategy_comparison.md](docs/strategy_comparison.md)
 
 ### V0：原始二层版 `triple_screen_optimized.py`
 
@@ -97,25 +103,108 @@ Elder《以交易为生》原始实现，两层滤网。
 - 文件：`triple_screen/triple_screen_impulse_v2.py`
 - 运行：`python triple_screen/run_backtest.py v2`
 
+### V3：短周期版 `triple_screen_v3.py`
+
+缩短周期 → 信号更频繁 → **交易次数增加**。
+
+| 层级 | 周期 | 指标 | 作用 |
+|------|------|------|------|
+| L1 | **日线** | MACD(8,24,9) 柱斜率 | 判断主趋势（周期缩短！） |
+| L2 | **小时线** | KD(14,3,3) 金叉/死叉 或 动力系统 | 识别回调结束 |
+| **L3** | **15分钟** | **精细择时** | **避免追高杀低** |
+
+**两种模式：**
+- `use_impulse=False`（默认）：L2 用 KD 金叉/死叉
+- `use_impulse=True`：L2 用动力系统颜色变化
+
+**注意**：V3 当前回测收益率为负（-5.04%），**不推荐实盘**，需进一步优化过滤条件。
+
+- 文件：`triple_screen/triple_screen_v3.py`
+- 运行：
+  ```bash
+  python triple_screen/run_backtest.py v3    # KD版
+  python triple_screen/run_backtest.py v3i   # 动力系统版
+  ```
+
+### V4：双层动力系统版 `triple_screen_v4.py`
+
+V2 的改进版：**L1 和 L2 均为动力系统**，判断更一致。
+
+| 层级 | 周期 | 指标 | 作用 |
+|------|------|------|------|
+| L1 | **周线** | **动力系统** | 判断主趋势（改用动力系统！） |
+| L2 | **日线** | **动力系统** | 颜色变化入场信号 |
+| L3 | 60分钟 | 精细择时 | 同 V1/V2 |
+
+**与 V2 的区别：**
+| | V2 | V4 |
+|---|-----|-----|
+| L1 | 周线MACD斜率 | **周线动力系统** |
+| L2 | 日线动力系统 | 日线动力系统（相同） |
+| 逻辑 | 混合 | **双层动力系统，更一致** |
+
+- 文件：`triple_screen/triple_screen_v4.py`
+- 运行：`python triple_screen/run_backtest.py v4`
+
+### V5：短周期双层动力系统版 `triple_screen_v5.py`
+
+将 V4 的双层动力系统逻辑搬到短周期（日-小时-15分钟），以**增加交易频率**。
+
+| 层级 | 周期 | 指标 | 作用 |
+|------|------|------|------|
+| L1 | **日线** | **动力系统** | 判断主趋势（周期缩短！） |
+| L2 | **小时线** | **动力系统** | 颜色变化入场信号 |
+| L3 | **15分钟** | 精细择时 | 避免追高杀低 |
+
+**驱动方式**：以小时线为时间轴，每个小时 Bar 检查信号。
+
+**注意**：小时线动力系统噪音太大，胜率仅 38.5%，**不推荐实盘**，需增加过滤条件（如要求小时线 impulse 连续 2 根才确认信号）。
+
+- 文件：`triple_screen/triple_screen_v5.py`
+- 运行：`python triple_screen/run_backtest.py v5`
+
 ---
 
-## 三版本回测对比
+## 六版本回测对比
+
+> 📖 **详细逻辑对照代码实现** → [docs/strategy_comparison.md](docs/strategy_comparison.md)
 
 > 回测区间：2025-01 ~ 2026-06，品种：棉花主力 CF0，初始资金：100,000 元
 
-| 指标 | V0 原始二层版 | V1 三层版 | V2 动力系统版 |
-|------|-------------|-----------|----------------|
-| **收益率** | +7.86% | **+14.03%** | +11.69% |
-| **胜率** | 66.7% | 66.7% | **69.2%** |
-| **盈亏比** | 2.45 | 4.60 | **8.64** |
-| **最大回撤** | -5.73% | -3.29% | **-2.25%** |
-| **交易次数** | 12 | 15 | 13 |
-| **适用场景** | 基准参考 | 趋势行情 | 稳健风格 |
+> 回测区间：2025-01 ~ 2026-06，品种：棉花主力 CF0，初始资金：100,000 元
 
-**结论：**
-- 追求最高收益 → 选 **V1**（三层精细择时，避免追高杀低）
-- 追求最小回撤/最高盈亏比 → 选 **V2**（动能衰竭即出场，风险控制最好）
-- V0 最简单，适合作为基准对照
+| 指标 | V0 原始二层 | V1 三层 | V2 动力系统 | V3 短周期(KD) | V4 双层动力 | V5 短周期动力 |
+|------|------------|--------|-------------|---------------|-------------|-----------------|
+| **收益率** | +7.86% | **+14.03%** 🏆 | +11.69% | -5.04% ❌ | +9.88% | +4.93% |
+| **胜率** | 66.7% | 66.7% | 69.2% | 53.1% | **71.4%** 🏆 | 38.5% ❌ |
+| **盈亏比** | 2.45 | 4.60 | 8.64 | 0.71 | **30.00** 🏆🏆 | 1.67 |
+| **最大回撤** | -5.73% | -3.29% | **-2.25%** 🏆 | ? | -8.99% ❌ | -6.03% |
+| **交易次数** | 12 | 15 | 13 | 32 | 7 | **52** |
+| **状态** | ✅ 基准 | ✅ 收益最优 | ✅ 风控最优 | ❌ 亏损中 | ⚠️ 回撤大 | ⚠️ 胜率低 |
+
+### 分维度排名
+
+| 维度 | 🥇 第1名 | 🥈 第2名 | 🥉 第3名 |
+|------|--------|--------|--------|
+| **收益率** | V1 (+14.03%) | V2 (+11.69%) | V4 (+9.88%) |
+| **胜率** | V4 (71.4%) | V2 (69.2%) | V1 (66.7%) |
+| **盈亏比** | V4 (30.00) | V2 (8.64) | V1 (4.60) |
+| **最大回撤(最小)** | V2 (-2.25%) | V1 (-3.29%) | V0 (-5.73%) |
+| **交易次数(多)** | V5 (52) | V3 (32) | V1 (15) |
+
+### 版本选择建议
+
+| 风险偏好 | 推荐版本 | 理由 |
+|----------|----------|------|
+| **稳健型** | **V2** | 最大回撤最小(-2.25%)，盈亏比高(8.64) |
+| **收益型** | **V1** | 收益率最高(+14.03%)，交易次数适中(15) |
+| **高频型** | V3/V5（需优化） | 交易次数多，但目前亏损，不推荐实盘 |
+
+**实盘部署建议：**
+1. **先用 V2 模拟盘验证**（最大回撤小，更安全）
+2. **验证通过后，V1 和 V2 各分配 50% 资金**
+3. **定期（每月）运行** `python triple_screen/run_backtest.py compare` **对比表现**
+4. **V3/V5 暂不推荐实盘**（亏损中，需优化）
 
 ---
 
@@ -129,16 +218,22 @@ pip install -r requirements.txt
 ### 运行回测
 ```bash
 # 运行指定版本
-python triple_screen/run_backtest.py v0
-python triple_screen/run_backtest.py v1
-python triple_screen/run_backtest.py v2
+python triple_screen/run_backtest.py v0        # V0: 原始二层版
+python triple_screen/run_backtest.py v1        # V1: 三层版（60分钟精细择时）
+python triple_screen/run_backtest.py v2        # V2: 动力系统版
+python triple_screen/run_backtest.py v3        # V3: 短周期版（KD）
+python triple_screen/run_backtest.py v3i       # V3: 短周期版（动力系统）
+python triple_screen/run_backtest.py v4        # V4: 双层动力系统版
+python triple_screen/run_backtest.py v5        # V5: 短周期双层动力系统版
 
-# 三版本对比
+# 六版本对比
 python triple_screen/run_backtest.py compare
 
 # 依次运行全部版本
 python triple_screen/run_backtest.py all
 ```
+
+> 📖 **详细逻辑对照代码实现** → [docs/strategy_comparison.md](docs/strategy_comparison.md)
 
 ### 参数优化网格搜索
 ```bash
