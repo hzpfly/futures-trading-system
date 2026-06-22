@@ -3,12 +3,13 @@
 三重滤网策略 - 统一回测入口
 ==============================
 
-支持五个版本:
+支持六个版本:
   v0  - 原始二层版 (MACD(8,24,9) + KD金叉)
   v1  - 三层版 (v0 + 60分钟精细择时)
   v2  - 动力系统版 (L1=周线MACD, L2=日线动力系统)
-  v3  - 短周期版 (日-小时-15分钟, 交易次数多但需优化)
-  v4  - 双层动力系统版 (L1=周线动力系统, L2=日线动力系统, L3=60分钟)
+  v3  - 短周期版 (日-小时-15分钟, KD金叉, 需优化)
+  v4  - 双层动力系统版(周-日-60)
+  v5  - 双层动力系统版(日-小时-15)
 
 用法:
   python run_backtest.py v0        # 运行v0
@@ -17,7 +18,8 @@
   python run_backtest.py v3        # 运行v3 (KD版)
   python run_backtest.py v3i       # 运行v3 (动力系统版)
   python run_backtest.py v4        # 运行v4
-  python run_backtest.py compare    # 五版本对比
+  python run_backtest.py v5        # 运行v5
+  python run_backtest.py compare    # 六版本对比
   python run_backtest.py all       # 依次运行全部
 """
 import sys
@@ -60,10 +62,16 @@ STRATEGIES = {
         'args': {'use_impulse': True},
     },
     'v4': {
-        'name': '双层动力系统版',
+        'name': '双层动力系统版(周-日-60)',
         'file': 'triple_screen_v4.py',
         'desc': 'L1=周线动力系统, L2=日线动力系统, L3=60分钟精细择时',
         'func': 'run_v4_backtest',
+    },
+    'v5': {
+        'name': '双层动力系统版(日-小时-15)',
+        'file': 'triple_screen_v5.py',
+        'desc': 'L1=日线动力系统, L2=小时线动力系统, L3=15分钟精细择时',
+        'func': 'run_v5_backtest',
     },
 }
 
@@ -101,7 +109,7 @@ def compare_versions():
 
     results = []
 
-    for key in ['v0', 'v1', 'v2', 'v3', 'v4']:
+    for key in ['v0', 'v1', 'v2', 'v3', 'v4', 'v5']:
         info = STRATEGIES[key]
         file_path = os.path.join(PROJECT_ROOT, 'triple_screen', info['file'])
         spec = importlib.util.spec_from_file_location(info['file'], file_path)
