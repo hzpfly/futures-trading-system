@@ -11,6 +11,7 @@ futures-trading-system/
 │   ├── triple_screen_optimize.py    # 参数优化网格搜索
 │   ├── triple_screen_akshare.py     # 初始版本（基础逻辑）
 │   ├── get_history_akshare.py       # AkShare历史数据获取工具
+│   ├── fetch_tick_data.py           # TqSdk Tick 数据实时采集器（需交易时段）
 │   ├── c_quote_monitor.py           # 玉米行情实时监控
 │   └── jd_quote_monitor.py          # 鸡蛋行情实时监控
 │
@@ -28,7 +29,8 @@ futures-trading-system/
 │
 ├── data/                       # 历史数据
 │   ├── cotton_cf_history.csv   # 棉花主力日线（2025-至今）
-│   └── iron_ore_history.csv    # 铁矿石主力日线（2025-至今）
+│   ├── iron_ore_history.csv    # 铁矿石主力日线（2025-至今）
+│   └── ticks/                  # Tick 逐笔数据（Parquet，不上传Git）
 │
 └── reports/
     └── triple_screen_report.html  # 回测报告（含可视化）
@@ -91,6 +93,19 @@ python futures_strategy/main.py
 python triple_screen/get_history_akshare.py
 # 无需认证，直接运行
 ```
+
+### 采集实时 Tick 数据（交易时段）
+```bash
+# 检查连接和主力合约
+python triple_screen/fetch_tick_data.py --check
+
+# 开始采集（按 Ctrl+C 停止）
+python triple_screen/fetch_tick_data.py
+
+# 采集指定时长后自动退出
+python triple_screen/fetch_tick_data.py --duration 120
+```
+Tick 数据保存至 `data/ticks/` 目录，格式为 Parquet，按品种+日期命名。
 
 ## 数据来源
 

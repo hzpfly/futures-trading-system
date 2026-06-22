@@ -5,3 +5,4 @@ flask>=2.3
 tqsdk>=3.7
 tushare>=1.4
 tomli>=2.0; python_version < "3.11"
+pyarrow>=14.0

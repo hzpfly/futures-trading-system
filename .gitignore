@@ -35,3 +35,7 @@ Thumbs.db
 
 # 大数据文件（可选）
 # data/*.csv
+
+# Tick 数据（体积巨大，不上传）
+data/ticks/*.parquet
+data/ticks/*.json

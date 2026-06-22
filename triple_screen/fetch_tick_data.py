@@ -1,0 +1,438 @@
+#!/usr/bin/env python3
+"""
+每日主力合约 Tick 数据采集器
+============================
+通过 TqSdk 实时采集主力合约的逐笔 tick 数据，按品种+日期保存为 Parquet 文件。
+支持自动识别主力合约、定时刷新缓冲区、断线重连。
+
+用法:
+  python fetch_tick_data.py               # 交互模式，采集直到手动停止
+  python fetch_tick_data.py --check        # 检查连通性和当前主力合约
+  python fetch_tick_data.py --duration 60  # 采集指定分钟数后自动退出
+
+依赖:
+  tqsdk, pandas, pyarrow (parquet 写入)
+"""
+
+import os, sys, time, signal, json
+from datetime import datetime, date, timedelta
+from pathlib import Path
+from typing import Optional, Dict, List
+from collections import defaultdict
+
+import numpy as np
+import pandas as pd
+
+# ============================================================
+# 配置
+# ============================================================
+
+# 监控品种：{显示名: (交易所ID, 品种代码)}
+PRODUCTS = {
+    "棉花":   ("CZCE", "CF"),
+    "铁矿石": ("DCE",  "i"),
+    "玉米":   ("DCE",  "c"),
+    "豆粕":   ("DCE",  "m"),
+}
+
+# 输出目录
+DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "ticks"
+
+# 缓冲区刷新间隔（秒）
+FLUSH_INTERVAL = 60
+
+# TqSdk 连接超时（秒）
+CONNECT_TIMEOUT = 15
+
+# session 元信息文件名
+META_FILE = "session_meta.json"
+
+# 优雅退出标志
+_shutdown_requested = False
+
+
+# ============================================================
+# 工具函数
+# ============================================================
+
+def load_tqsdk_config() -> tuple:
+    """从 ~/.futures_config.toml 加载 TqSdk 凭据"""
+    config_path = Path.home() / ".futures_config.toml"
+    if not config_path.exists():
+        print(f"[ERROR] 配置文件不存在: {config_path}")
+        print("        请参考 triple_screen/config.toml.example 创建 ~/.futures_config.toml")
+        sys.exit(1)
+
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+
+    with open(config_path, "rb") as f:
+        cfg = tomllib.load(f)
+
+    tq = cfg.get("tqsdk", {})
+    user = tq.get("username", "")
+    pwd = tq.get("password", "")
+    if not user or not pwd:
+        print("[ERROR] TqSdk 账号密码未配置，请编辑 ~/.futures_config.toml")
+        sys.exit(1)
+    return user, pwd
+
+
+def make_kqm_symbol(exchange: str, product: str) -> str:
+    """构造主力连续合约代码，如 KQ.m@CZCE.CF"""
+    return f"KQ.m@{exchange}.{product}"
+
+
+def nan_to_none(val):
+    """NaN 转 None (JSON 序列化用)"""
+    if isinstance(val, float) and np.isnan(val):
+        return None
+    return val
+
+
+# ============================================================
+# Tick 采集器
+# ============================================================
+
+class TickCollector:
+    """主力合约 Tick 数据实时采集器"""
+
+    def __init__(self, duration_minutes: int = 0):
+        self.username, self.password = load_tqsdk_config()
+        self.duration = duration_minutes
+        self.api = None
+
+        # 缓冲区: {product_name: [list of tick dicts]}
+        self.buffers: Dict[str, List[dict]] = defaultdict(list)
+
+        # 合约映射: {product_name: actual_contract_code}
+        self.contracts: Dict[str, str] = {}
+
+        # tick_serial 引用
+        self.tick_refs: Dict[str, pd.DataFrame] = {}
+
+        self.start_time = None
+        self.last_flush = None
+        self.tick_counts: Dict[str, int] = defaultdict(int)
+
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    # -------- 连接 --------
+
+    def connect(self) -> bool:
+        """连接 TqSdk 服务器。成功返回 True"""
+        from tqsdk import TqApi, TqAuth
+        import threading
+
+        connected = [False]
+        error_msg = [None]
+
+        def _do_connect():
+            try:
+                api = TqApi(auth=TqAuth(self.username, self.password))
+                self.api = api
+                connected[0] = True
+            except Exception as e:
+                error_msg[0] = str(e)
+
+        thread = threading.Thread(target=_do_connect, daemon=True)
+        thread.start()
+        thread.join(timeout=CONNECT_TIMEOUT)
+
+        if not connected[0]:
+            msg = error_msg[0] or "连接超时"
+            print(f"[INFO] TqSdk 连接失败: {msg}")
+            print("       当前可能非交易时段，请在交易时段运行此脚本。")
+            return False
+
+        print(f"[OK] TqSdk 已连接")
+        return True
+
+    # -------- 主力合约识别 --------
+
+    def detect_main_contracts(self) -> bool:
+        """通过 KQ.m@ 判断每个品种的主力合约"""
+        print("\n[检测] 识别主力合约...")
+        found_any = False
+
+        for name, (exchange, product_code) in PRODUCTS.items():
+            kqm = make_kqm_symbol(exchange, product_code)
+            try:
+                quote = self.api.get_quote(kqm)
+                # 需要一次 wait_update 让数据就绪
+                self.api.wait_update(deadline=time.time() + 5)
+                underlying = quote.get("underlying_symbol", "")
+                if underlying:
+                    self.contracts[name] = underlying
+                    print(f"  {name}: {underlying}")
+                    found_any = True
+                else:
+                    # fallback: try KQ.m@ directly for tick subscription
+                    self.contracts[name] = kqm
+                    print(f"  {name}: {kqm} (无具体合约，使用主连)")
+                    found_any = True
+            except Exception as e:
+                print(f"  {name}: 查询失败 ({e})")
+                self.contracts[name] = kqm  # fallback
+
+        if not found_any:
+            print("[WARN] 未找到任何主力合约")
+            return False
+        return True
+
+    # -------- 订阅 --------
+
+    def subscribe_all(self):
+        """订阅所有主力合约的 tick 序列"""
+        print("\n[订阅] 开始接收 tick 数据...")
+        for name, contract in self.contracts.items():
+            try:
+                tick_df = self.api.get_tick_serial(contract)
+                self.tick_refs[name] = tick_df
+                print(f"  {name} ({contract}): 已订阅")
+            except Exception as e:
+                print(f"  {name} ({contract}): 订阅失败 ({e})")
+
+    # -------- 主循环 --------
+
+    def run(self):
+        """主采集循环"""
+        if not self.connect():
+            return
+
+        if not self.detect_main_contracts():
+            self.api.close()
+            return
+
+        self.subscribe_all()
+
+        self.start_time = time.time()
+        self.last_flush = time.time()
+
+        print("\n" + "=" * 50)
+        print("[运行] 开始采集 tick 数据")
+        print(f"       缓冲区刷新间隔: {FLUSH_INTERVAL}s")
+        if self.duration > 0:
+            print(f"       计划运行: {self.duration} 分钟")
+        else:
+            print(f"       按 Ctrl+C 停止")
+        print("=" * 50 + "\n")
+
+        # 注册信号处理
+        signal.signal(signal.SIGINT, self._on_signal)
+        signal.signal(signal.SIGTERM, self._on_signal)
+
+        # 上次打印统计的时间
+        last_stats_time = time.time()
+
+        try:
+            while not _shutdown_requested:
+                # 等待行情更新（带1秒超时以便检查退出标志）
+                try:
+                    self.api.wait_update(deadline=time.time() + 1)
+                except Exception as e:
+                    print(f"\n[WARN] wait_update 异常: {e}")
+                    time.sleep(1)
+                    continue
+
+                # 检查每个品种的 tick 更新
+                for name, tick_df in self.tick_refs.items():
+                    try:
+                        if self.api.is_changing(tick_df):
+                            new_tick = tick_df.iloc[-1].to_dict()
+                            new_tick["product"] = name
+                            new_tick["contract"] = self.contracts[name]
+                            self.buffers[name].append(new_tick)
+                            self.tick_counts[name] += 1
+                    except Exception:
+                        pass  # 单个品种异常不影响其他
+
+                # 定时刷新缓冲区
+                if time.time() - self.last_flush >= FLUSH_INTERVAL:
+                    self._flush_all()
+                    self.last_flush = time.time()
+
+                # 定时打印统计
+                if time.time() - last_stats_time >= 60:
+                    self._print_stats()
+                    last_stats_time = time.time()
+
+                # 检查运行时长
+                if self.duration > 0:
+                    elapsed = (time.time() - self.start_time) / 60
+                    if elapsed >= self.duration:
+                        print(f"\n[完成] 已达到设定的 {self.duration} 分钟采集时长")
+                        break
+
+        except KeyboardInterrupt:
+            print("\n[INFO] 收到中断信号")
+
+        finally:
+            self._shutdown()
+
+    def _flush_all(self):
+        """将所有缓冲区写入磁盘（Parquet 优先，无 pyarrow 时用 CSV.gz）"""
+        date_str = date.today().isoformat()
+        total_written = 0
+        for name, ticks in list(self.buffers.items()):
+            if not ticks:
+                continue
+            try:
+                df = pd.DataFrame(ticks)
+                if df.empty:
+                    self.buffers[name] = []
+                    continue
+                contract = self.contracts.get(name, "UNKNOWN")
+                if "datetime" in df.columns:
+                    df["datetime"] = pd.to_datetime(df["datetime"], unit="ns")
+                # 尝试 Parquet，失败则用 CSV.gz
+                try:
+                    fpath = DATA_DIR / f"tick_{name}_{contract}_{date_str}.parquet"
+                    df.to_parquet(fpath, index=False)
+                except ImportError:
+                    fpath = DATA_DIR / f"tick_{name}_{contract}_{date_str}.csv.gz"
+                    df.to_csv(fpath, index=False, compression="gzip")
+                total_written += len(ticks)
+                self.buffers[name] = []
+            except Exception as e:
+                print(f"  [ERROR] 写入 {name} 失败: {e}")
+        if total_written > 0:
+            print(f"  [FLUSH] 写入 {total_written} 条 tick")
+
+    def _print_stats(self):
+        """打印采集统计"""
+        elapsed = (time.time() - self.start_time) / 60
+        total = sum(self.tick_counts.values())
+        parts = [f"{n}:{c}" for n, c in self.tick_counts.items() if c > 0]
+        detail = ", ".join(parts) if parts else "暂无数据"
+        print(f"  [STATS] 运行 {elapsed:.1f}min | 累计 {total} ticks | {detail}")
+
+    def _on_signal(self, signum, frame):
+        """信号处理"""
+        global _shutdown_requested
+        print(f"\n[INFO] 收到退出信号 ({signum})")
+        _shutdown_requested = True
+
+    def _shutdown(self):
+        """清理资源"""
+        print("\n[清理] 正在保存剩余数据...")
+        try:
+            self._flush_all()
+        except Exception as e:
+            print(f"  [WARN] 保存数据时出错: {e}")
+        try:
+            self._save_summary()
+        except Exception as e:
+            print(f"  [WARN] 保存汇总时出错: {e}")
+
+        if self.api:
+            try:
+                self.api.close()
+                time.sleep(0.5)  # 让 TqSdk 清理异步任务
+            except Exception:
+                pass
+            print("[OK] TqSdk 已断开")
+
+        total = sum(self.tick_counts.values())
+        elapsed = (time.time() - self.start_time) / 60 if self.start_time else 0
+        if total == 0:
+            print(f"\n[INFO] 采集结束。当前非交易时段，未收到 tick 数据。")
+            print(f"       请在交易时段运行此脚本以采集实时 tick。")
+        else:
+            print(f"\n[完成] 采集结束。总 tick 数: {total}, 运行 {elapsed:.1f} 分钟")
+        print(f"       数据目录: {DATA_DIR}")
+
+    def _save_summary(self):
+        """保存本次采集的汇总信息"""
+        date_str = date.today().isoformat()
+        total = sum(self.tick_counts.values())
+        summary = {
+            "date": date_str,
+            "total_ticks": int(total),
+            "duration_seconds": time.time() - self.start_time if self.start_time else 0,
+            "contracts": self.contracts,
+            "tick_counts": {k: int(v) for k, v in self.tick_counts.items()},
+        }
+        # 确保可 JSON 序列化
+        summary["duration_seconds"] = int(summary["duration_seconds"])
+        fpath = DATA_DIR / f"summary_{date_str}.json"
+        with open(fpath, "w") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        print(f"  汇总已保存: {fpath}")
+
+
+# ============================================================
+# --check 模式：仅测试连接
+# ============================================================
+
+def check_mode():
+    """检查 TqSdk 连通性和主力合约"""
+    from tqsdk import TqApi, TqAuth
+    import threading
+
+    user, pwd = load_tqsdk_config()
+    print(f"[检测] 正在连接 TqSdk 服务器...")
+
+    api_container = [None]
+    error_msg = [None]
+
+    def _try_connect():
+        try:
+            api_container[0] = TqApi(auth=TqAuth(user, pwd))
+        except Exception as e:
+            error_msg[0] = str(e)
+
+    thread = threading.Thread(target=_try_connect, daemon=True)
+    thread.start()
+    thread.join(timeout=CONNECT_TIMEOUT)
+
+    api = api_container[0]
+    if api is None:
+        msg = error_msg[0] or "连接超时"
+        print(f"[失败] 无法连接 TqSdk: {msg}")
+        print("       可能原因: 非交易时段 / 网络问题 / 账号密码错误")
+        return
+
+    print("[OK] TqSdk 连接成功！\n")
+
+    print("主力合约信息:")
+    print("-" * 50)
+    for name, (exchange, code) in PRODUCTS.items():
+        kqm = make_kqm_symbol(exchange, code)
+        try:
+            quote = api.get_quote(kqm)
+            api.wait_update(deadline=time.time() + 5)
+            underlying = quote.get("underlying_symbol", "未知")
+            last_price = quote.get("last_price", 0)
+            volume = quote.get("volume", 0)
+            print(f"  {name:6s} | {kqm:18s} → {underlying:16s} | 最新价: {last_price:>8.1f} | 成交量: {volume:>10.0f}")
+        except Exception as e:
+            print(f"  {name:6s} | {kqm:18s} | 查询失败: {e}")
+
+    api.close()
+    print("\n[完成] 检查结束。")
+
+
+# ============================================================
+# 入口
+# ============================================================
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="每日主力合约 Tick 数据采集器")
+    parser.add_argument("--check", action="store_true", help="仅检查连接和主力合约")
+    parser.add_argument("--duration", type=int, default=0,
+                        help="采集时长（分钟），0 表示直到手动停止")
+    args = parser.parse_args()
+
+    if args.check:
+        check_mode()
+    else:
+        collector = TickCollector(duration_minutes=args.duration)
+        collector.run()
+
+
+if __name__ == "__main__":
+    main()
