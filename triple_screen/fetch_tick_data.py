@@ -5,10 +5,13 @@
 通过 TqSdk 实时采集主力合约的逐笔 tick 数据，按品种+日期保存为 Parquet 文件。
 支持自动识别主力合约、定时刷新缓冲区、断线重连。
 
-用法:
+ 用法:
   python fetch_tick_data.py               # 交互模式，采集直到手动停止
   python fetch_tick_data.py --check        # 检查连通性和当前主力合约
   python fetch_tick_data.py --duration 60  # 采集指定分钟数后自动退出
+  python fetch_tick_data.py --session day  # 日盘 (文件名: 2026-06-22_day.parquet)
+  python fetch_tick_data.py --session night # 夜盘 (文件名: 2026-06-22_night.parquet)
+  python fetch_tick_data.py --session auto # 自动识别 (8-17点→day, 20-3点→night)
 
 依赖:
   tqsdk, pandas, pyarrow (parquet 写入)
@@ -28,11 +31,74 @@ import pandas as pd
 # ============================================================
 
 # 监控品种：{显示名: (交易所ID, 品种代码)}
+# 覆盖五大期货交易所主力合约（共 50+ 品种）
 PRODUCTS = {
-    "棉花":   ("CZCE", "CF"),
-    "铁矿石": ("DCE",  "i"),
-    "玉米":   ("DCE",  "c"),
-    "豆粕":   ("DCE",  "m"),
+    # ─── 郑商所 CZCE ───
+    "棉花":     ("CZCE", "CF"),
+    "白糖":     ("CZCE", "SR"),
+    "PTA":      ("CZCE", "TA"),
+    "甲醇":     ("CZCE", "MA"),
+    "菜粕":     ("CZCE", "RM"),
+    "菜油":     ("CZCE", "OI"),
+    "玻璃":     ("CZCE", "FG"),
+    "纯碱":     ("CZCE", "SA"),
+    "尿素":     ("CZCE", "UR"),
+    "短纤":     ("CZCE", "PF"),
+    "棉纱":     ("CZCE", "CY"),
+    "硅铁":     ("CZCE", "SF"),
+    "锰硅":     ("CZCE", "SM"),
+    "苹果":     ("CZCE", "AP"),
+    "花生":     ("CZCE", "PK"),
+    "红枣":     ("CZCE", "CJ"),
+    # ─── 大商所 DCE ───
+    "铁矿石":   ("DCE",  "i"),
+    "玉米":     ("DCE",  "c"),
+    "豆粕":     ("DCE",  "m"),
+    "豆油":     ("DCE",  "y"),
+    "棕榈油":   ("DCE",  "p"),
+    "豆一":     ("DCE",  "a"),
+    "豆二":     ("DCE",  "b"),
+    "聚乙烯":   ("DCE",  "l"),
+    "PVC":      ("DCE",  "v"),
+    "聚丙烯":   ("DCE",  "pp"),
+    "焦炭":     ("DCE",  "j"),
+    "焦煤":     ("DCE",  "jm"),
+    "乙二醇":   ("DCE",  "eg"),
+    "苯乙烯":   ("DCE",  "eb"),
+    "液化气":   ("DCE",  "pg"),
+    "生猪":     ("DCE",  "lh"),
+    "鸡蛋":     ("DCE",  "jd"),
+    "玉米淀粉": ("DCE",  "cs"),
+    # ─── 上期所 SHFE ───
+    "螺纹钢":   ("SHFE", "rb"),
+    "热卷":     ("SHFE", "hc"),
+    "沪铜":     ("SHFE", "cu"),
+    "沪铝":     ("SHFE", "al"),
+    "沪锌":     ("SHFE", "zn"),
+    "沪铅":     ("SHFE", "pb"),
+    "沪镍":     ("SHFE", "ni"),
+    "沪锡":     ("SHFE", "sn"),
+    "黄金":     ("SHFE", "au"),
+    "白银":     ("SHFE", "ag"),
+    "橡胶":     ("SHFE", "ru"),
+    "纸浆":     ("SHFE", "sp"),
+    "沥青":     ("SHFE", "bu"),
+    "燃料油":   ("SHFE", "fu"),
+    "不锈钢":   ("SHFE", "ss"),
+    # ─── 能源中心 INE ───
+    "原油":     ("INE",  "sc"),
+    "20号胶":   ("INE",  "nr"),
+    "低硫燃油": ("INE",  "lu"),
+    "国际铜":   ("INE",  "bc"),
+    # ─── 中金所 CFFEX ───
+    "沪深300":  ("CFFEX", "IF"),
+    "中证500":  ("CFFEX", "IC"),
+    "上证50":   ("CFFEX", "IH"),
+    "中证1000": ("CFFEX", "IM"),
+    "10年国债": ("CFFEX", "T"),
+    "5年国债":  ("CFFEX", "TF"),
+    "2年国债":  ("CFFEX", "TS"),
+    "30年国债": ("CFFEX", "TL"),
 }
 
 # 输出目录
@@ -99,16 +165,20 @@ def nan_to_none(val):
 class TickCollector:
     """主力合约 Tick 数据实时采集器"""
 
-    def __init__(self, duration_minutes: int = 0):
+    def __init__(self, duration_minutes: int = 0, session: str = "auto"):
         self.username, self.password = load_tqsdk_config()
         self.duration = duration_minutes
         self.api = None
+        self.session = session  # "day", "night", or "auto"
 
         # 缓冲区: {product_name: [list of tick dicts]}
         self.buffers: Dict[str, List[dict]] = defaultdict(list)
 
         # 合约映射: {product_name: actual_contract_code}
         self.contracts: Dict[str, str] = {}
+
+        # 品种信息: {product_name: (exchange, product_code)}
+        self.product_info: Dict[str, tuple] = {}
 
         # tick_serial 引用
         self.tick_refs: Dict[str, pd.DataFrame] = {}
@@ -158,6 +228,7 @@ class TickCollector:
         found_any = False
 
         for name, (exchange, product_code) in PRODUCTS.items():
+            self.product_info[name] = (exchange, product_code)
             kqm = make_kqm_symbol(exchange, product_code)
             try:
                 quote = self.api.get_quote(kqm)
@@ -272,6 +343,25 @@ class TickCollector:
         finally:
             self._shutdown()
 
+    def _tick_path(self, name: str, date_str: str) -> Path:
+        """构建 tick 数据文件路径: data/ticks/{品种}/{交易所}.{代码}/{日期}_{session}.parquet"""
+        exchange, product_code = self.product_info.get(name, ("UNKNOWN", "UNKNOWN"))
+        subdir = DATA_DIR / name / f"{exchange}.{product_code}"
+        subdir.mkdir(parents=True, exist_ok=True)
+        session_label = self._resolve_session()
+        return subdir / f"{date_str}_{session_label}.parquet"
+
+    def _resolve_session(self) -> str:
+        """解析当前时段标签: day / night"""
+        if self.session in ("day", "night"):
+            return self.session
+        # auto: 根据当前时间判断
+        hour = datetime.now().hour
+        if 8 <= hour < 18:
+            return "day"
+        else:
+            return "night"
+
     def _flush_all(self):
         """将所有缓冲区写入磁盘（Parquet 优先，无 pyarrow 时用 CSV.gz）"""
         date_str = date.today().isoformat()
@@ -284,15 +374,14 @@ class TickCollector:
                 if df.empty:
                     self.buffers[name] = []
                     continue
-                contract = self.contracts.get(name, "UNKNOWN")
                 if "datetime" in df.columns:
                     df["datetime"] = pd.to_datetime(df["datetime"], unit="ns")
                 # 尝试 Parquet，失败则用 CSV.gz
                 try:
-                    fpath = DATA_DIR / f"tick_{name}_{contract}_{date_str}.parquet"
+                    fpath = self._tick_path(name, date_str)
                     df.to_parquet(fpath, index=False)
                 except ImportError:
-                    fpath = DATA_DIR / f"tick_{name}_{contract}_{date_str}.csv.gz"
+                    fpath = self._tick_path(name, date_str).with_suffix(".csv.gz")
                     df.to_csv(fpath, index=False, compression="gzip")
                 total_written += len(ticks)
                 self.buffers[name] = []
@@ -345,7 +434,7 @@ class TickCollector:
         print(f"       数据目录: {DATA_DIR}")
 
     def _save_summary(self):
-        """保存本次采集的汇总信息"""
+        """保存本次采集的汇总信息（存放在全局 data/ticks 目录下）"""
         date_str = date.today().isoformat()
         total = sum(self.tick_counts.values())
         summary = {
@@ -355,12 +444,18 @@ class TickCollector:
             "contracts": self.contracts,
             "tick_counts": {k: int(v) for k, v in self.tick_counts.items()},
         }
-        # 确保可 JSON 序列化
         summary["duration_seconds"] = int(summary["duration_seconds"])
-        fpath = DATA_DIR / f"summary_{date_str}.json"
+        # 全局汇总文件
+        fpath = DATA_DIR / f"_summary_{date_str}.json"
         with open(fpath, "w") as f:
             json.dump(summary, f, ensure_ascii=False, indent=2)
-        print(f"  汇总已保存: {fpath}")
+        print(f"  汇总已保存: {fpath.name}")
+        # 同时写一份到每个品种的目录下
+        for name in self.tick_counts:
+            if self.tick_counts[name] > 0 and name in self.product_info:
+                subdir = self._tick_path(name, date_str).parent
+                with open(subdir / f"_summary_{date_str}.json", "w") as f:
+                    json.dump(summary, f, ensure_ascii=False, indent=2)
 
 
 # ============================================================
@@ -416,6 +511,172 @@ def check_mode():
 
 
 # ============================================================
+# --backtest 模式：使用回测引擎采集历史 tick
+# ============================================================
+
+def backtest_mode(target_date: date, products: Optional[List[str]] = None):
+    """
+    使用 TqSdk TqBacktest 引擎回放指定交易日，采集 tick 数据。
+
+    Args:
+        target_date: 目标回放日期
+        products: 要采集的品种列表 (key from PRODUCTS)，None=全部
+    """
+    from tqsdk import TqApi, TqAuth, TqBacktest, BacktestFinished
+
+    user, pwd = load_tqsdk_config()
+    date_str = target_date.isoformat()
+
+    # 确定品种列表
+    if products is None:
+        products = list(PRODUCTS.keys())
+
+    # 回测时间范围：目标日期一天
+    end_dt = date(target_date.year, target_date.month, min(target_date.day + 1, 28))
+
+    print(f"[回放] 目标日期: {date_str}")
+    print(f"[回放] 品种: {', '.join(products)}")
+    print()
+
+    # 第一步：用短回测识别目标日期的主力合约
+    print("[步骤1] 识别主力合约...")
+    contract_map = {}
+
+    try:
+        api = TqApi(
+            backtest=TqBacktest(start_dt=target_date, end_dt=end_dt),
+            auth=TqAuth(user, pwd)
+        )
+
+        for name in products:
+            if name in PRODUCTS:
+                exchange, code = PRODUCTS[name]
+                kqm = make_kqm_symbol(exchange, code)
+                try:
+                    q = api.get_quote(kqm)
+                    api.wait_update()
+                    # 等待 underlying_symbol 出现
+                    start = time.time()
+                    while time.time() - start < 10:
+                        api.wait_update()
+                        ul = q.get("underlying_symbol", "")
+                        if ul and ul.startswith(f"{exchange}."):
+                            contract_map[name] = ul
+                            print(f"  {name}: {kqm} → {ul}")
+                            break
+                    if name not in contract_map:
+                        contract_map[name] = kqm  # fallback
+                        print(f"  {name}: {kqm} (无法解析主力合约)")
+                except Exception as e:
+                    print(f"  {name}: 查询失败 ({e})")
+                    contract_map[name] = kqm
+
+        api.close()
+    except Exception as e:
+        print(f"[ERROR] 获取主力合约失败: {e}")
+        return
+
+    if not contract_map:
+        print("[ERROR] 未找到任何合约")
+        return
+
+    # 第二步：用回测引擎重放，采集 tick
+    print(f"\n[步骤2] 开始回放采集 tick ({date_str})...")
+
+    all_ticks: Dict[str, List[dict]] = {name: [] for name in contract_map}
+    tick_serials: Dict[str, pd.DataFrame] = {}
+    total_ticks = 0
+
+    try:
+        api = TqApi(
+            backtest=TqBacktest(start_dt=target_date, end_dt=end_dt),
+            auth=TqAuth(user, pwd)
+        )
+
+        # 订阅所有合约的 tick 序列
+        for name, contract in contract_map.items():
+            try:
+                tick_df = api.get_tick_serial(contract)
+                tick_serials[name] = tick_df
+                print(f"  {name} ({contract}): 已订阅 tick")
+            except Exception as e:
+                print(f"  {name} ({contract}): tick订阅失败 ({e})")
+
+        if not tick_serials:
+            print("[ERROR] 没有成功订阅任何 tick")
+            api.close()
+            return
+
+        print(f"\n[采集] 逐tick回放中...")
+
+        try:
+            while True:
+                api.wait_update()
+
+                for name, tick_df in tick_serials.items():
+                    if api.is_changing(tick_df):
+                        new_tick = tick_df.iloc[-1].to_dict()
+                        new_tick["product"] = name
+                        new_tick["contract"] = contract_map[name]
+                        all_ticks[name].append(new_tick)
+                        total_ticks += 1
+
+        except BacktestFinished:
+            pass
+
+        api.close()
+
+    except Exception as e:
+        print(f"[ERROR] 回放过程出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    # 第三步：保存数据
+    print(f"\n[保存] 写入数据文件...")
+
+    saved_files = []
+    grand_total = 0
+
+    for name, ticks in all_ticks.items():
+        if not ticks:
+            print(f"  {name}: 无数据 (市场可能休市)")
+            continue
+
+        df = pd.DataFrame(ticks)
+
+        if "datetime" in df.columns:
+            df["datetime"] = pd.to_datetime(df["datetime"], unit="ns")
+
+        # 子目录结构: data/ticks/{品种}/{交易所}.{代码}/{日期}.parquet
+        exchange, product_code = PRODUCTS.get(name, ("UNKNOWN", "UNKNOWN"))
+        subdir = DATA_DIR / name / f"{exchange}.{product_code}"
+        subdir.mkdir(parents=True, exist_ok=True)
+        fpath = subdir / f"{date_str}_day.parquet"
+        df.to_parquet(fpath, index=False)
+        saved_files.append(str(fpath))
+        grand_total += len(ticks)
+        print(f"  {name}: {len(ticks)} ticks → {fpath.relative_to(DATA_DIR)}")
+
+    # 保存汇总
+    summary = {
+        "date": date_str,
+        "mode": "backtest",
+        "contracts": contract_map,
+        "tick_counts": {k: len(v) for k, v in all_ticks.items()},
+        "total_ticks": grand_total,
+        "files": saved_files,
+    }
+    sfpath = DATA_DIR / f"_summary_{date_str}.json"
+    with open(sfpath, "w") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    print(f"  汇总: {sfpath.name}")
+
+    print(f"\n[完成] 回放采集结束。总计 {grand_total} ticks, {len(all_ticks)} 品种")
+    print(f"       数据目录: {DATA_DIR}")
+
+
+# ============================================================
 # 入口
 # ============================================================
 
@@ -425,12 +686,20 @@ def main():
     parser.add_argument("--check", action="store_true", help="仅检查连接和主力合约")
     parser.add_argument("--duration", type=int, default=0,
                         help="采集时长（分钟），0 表示直到手动停止")
+    parser.add_argument("--backtest", type=str, default=None,
+                        help="使用回测引擎回放指定日期 (YYYY-MM-DD) 并采集 tick")
+    parser.add_argument("--session", type=str, default="auto",
+                        choices=["day", "night", "auto"],
+                        help="时段: day=日盘, night=夜盘, auto=自动识别 (默认auto)")
     args = parser.parse_args()
 
     if args.check:
         check_mode()
+    elif args.backtest:
+        bt_date = date.fromisoformat(args.backtest)
+        backtest_mode(bt_date)
     else:
-        collector = TickCollector(duration_minutes=args.duration)
+        collector = TickCollector(duration_minutes=args.duration, session=args.session)
         collector.run()
 
 
