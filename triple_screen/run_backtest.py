@@ -3,16 +3,19 @@
 三重滤网策略 - 统一回测入口
 ==============================
 
-支持三个版本:
+支持四个版本:
   v0  - 原始二层版 (MACD(8,24,9) + KD金叉)
   v1  - 三层版 (v0 + 60分钟精细择时)
   v2  - 动力系统版 (EMA(13) + MACD柱颜色变化)
+  v3  - 短周期版 (日-小时-15分钟, 交易次数多但需优化)
 
 用法:
   python run_backtest.py v0        # 运行v0
   python run_backtest.py v1        # 运行v1
   python run_backtest.py v2        # 运行v2
-  python run_backtest.py compare    # 三版本对比
+  python run_backtest.py v3        # 运行v3 (KD版)
+  python run_backtest.py v3i       # 运行v3 (动力系统版)
+  python run_backtest.py compare    # 四版本对比
   python run_backtest.py all       # 依次运行全部
 """
 import sys
@@ -26,16 +29,32 @@ STRATEGIES = {
         'name': '原始二层版',
         'file': 'triple_screen_optimized.py',
         'desc': 'MACD(8,24,9) + KD(14,3,3) 金叉进场, KD>70止盈',
+        'func': 'run_backtest',
     },
     'v1': {
         'name': '三层版',
         'file': 'triple_screen_3layer.py',
         'desc': 'v0 + 60分钟精细择时, 避免追高杀低',
+        'func': 'run_backtest',
     },
     'v2': {
         'name': '动力系统版',
         'file': 'triple_screen_impulse_v2.py',
         'desc': 'EMA(13)+MACD柱颜色变化进场, 动能衰竭即出场',
+        'func': 'run_backtest',
+    },
+    'v3': {
+        'name': '短周期KD版',
+        'file': 'triple_screen_v3.py',
+        'desc': '日-小时-15分钟, L2=KD, 交易次数多(需优化)',
+        'func': 'run_backtest',
+    },
+    'v3i': {
+        'name': '短周期动力系统版',
+        'file': 'triple_screen_v3.py',
+        'desc': '日-小时-15分钟, L2=动力系统, 交易次数多(需优化)',
+        'func': 'run_backtest',
+        'impulse': True,
     },
 }
 
@@ -58,7 +77,11 @@ def run_version(version_key):
     spec.loader.exec_module(module)
 
     # 调用对应版本的回测函数
-    if version_key == 'v0':
+    kwargs = {}
+    if version_key == 'v3' or version_key == 'v3i':
+        kwargs['use_impulse'] = info.get('impulse', False)
+        trades, equity = module.run_backtest(**kwargs)
+    elif version_key == 'v0':
         trades, equity = module.run_detailed_backtest()
     elif version_key == 'v1':
         trades, equity = module.run_3layer_backtest()
@@ -69,13 +92,13 @@ def run_version(version_key):
 
 
 def compare_versions():
-    """三版本对比摘要"""
+    """四版本对比摘要"""
     import pandas as pd
     import importlib.util
 
     results = []
 
-    for key in ['v0', 'v1', 'v2']:
+    for key in ['v0', 'v1', 'v2', 'v3', 'v3i']:
         info = STRATEGIES[key]
         file_path = os.path.join(PROJECT_ROOT, 'triple_screen', info['file'])
         spec = importlib.util.spec_from_file_location(info['file'], file_path)
@@ -94,6 +117,11 @@ def compare_versions():
                 trades, equity = module.run_3layer_backtest()
             elif key == 'v2':
                 trades, equity = module.run_v2_backtest()
+            elif key in ['v3', 'v3i']:
+                use_impulse = info.get('impulse', False)
+                result = module.run_backtest(use_impulse=use_impulse)
+                trades = result.get('trades', [])
+                equity = result.get('return', 0)
 
         output = f.getvalue()
 
@@ -110,20 +138,20 @@ def compare_versions():
                 result['profit_factor'] = float(line.split(':')[1].strip())
             elif '最大回撤' in line:
                 result['max_dd'] = float(line.split(':')[1].strip().replace('%', ''))
-            elif '总交易次数' in line:
+            elif '交易次数' in line:
                 result['trades'] = int(line.split(':')[1].strip())
 
         results.append(result)
 
     # 输出对比表
     print("\n" + "=" * 80)
-    print("三版本回测对比 (2025-01 ~ 2026-06, 棉花CF0)")
+    print("四版本回测对比 (2024-01 ~ 2026-06, 棉花CF0)")
     print("=" * 80)
-    print(f"\n{'版本':<6} {'名称':<16} {'收益率':>8} {'胜率':>6} {'盈亏比':>6} {'最大回撤':>8} {'交易次数':>6}")
+    print(f"\n{'版本':<6} {'名称':<20} {'收益率':>8} {'胜率':>6} {'盈亏比':>6} {'最大回撤':>8} {'交易次数':>6}")
     print("-" * 80)
 
     for r in results:
-        print(f"{r['version']:<6} {r['name']:<16} {r.get('return','?'):>7.2f}% "
+        print(f"{r['version']:<6} {r['name']:<20} {r.get('return','?'):>7.2f}% "
               f"{r.get('win_rate','?'):>5.1f}% {r.get('profit_factor','?'):>5.2f}  "
               f"{r.get('max_dd','?'):>7.2f}% {r.get('trades','?'):>6}")
 
@@ -148,12 +176,12 @@ if __name__ == '__main__':
     if version == 'compare':
         compare_versions()
     elif version == 'all':
-        for k in ['v0', 'v1', 'v2']:
+        for k in ['v0', 'v1', 'v2', 'v3', 'v3i']:
             run_version(k)
             print("\n" + "=" * 60)
     elif version in STRATEGIES:
         run_version(version)
     else:
         print(f"未知版本: {version}")
-        print("支持: v0, v1, v2, compare, all")
+        print("支持: v0, v1, v2, v3, v3i, compare, all")
         sys.exit(1)
