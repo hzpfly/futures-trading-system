@@ -36,6 +36,7 @@ Thumbs.db
 # 数据文件（可重新下载/采集，不上传）
 data/kline/
 data/ticks/
+data/archive/
 
 # 报告（自动生成，不上传）
 reports/

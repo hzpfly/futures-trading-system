@@ -165,11 +165,18 @@ def nan_to_none(val):
 class TickCollector:
     """主力合约 Tick 数据实时采集器"""
 
-    def __init__(self, duration_minutes: int = 0, session: str = "auto"):
+    def __init__(self, duration_minutes: int = 0, session: str = "auto", tag: str = None):
         self.username, self.password = load_tqsdk_config()
         self.duration = duration_minutes
         self.api = None
         self.session = session  # "day", "night", or "auto"
+
+        # 文件名标签（默认用启动时刻 HHMMSS）。同一目录多进程/多次启动不会互相覆盖。
+        if tag is None:
+            tag = datetime.now().strftime("%H%M%S")
+        self.tag = tag
+        # flush 计数器：每次 _flush_all 自增，写入文件名以避免单次运行内部覆盖。
+        self._flush_seq = 0
 
         # 缓冲区: {product_name: [list of tick dicts]}
         self.buffers: Dict[str, List[dict]] = defaultdict(list)
@@ -343,13 +350,20 @@ class TickCollector:
         finally:
             self._shutdown()
 
-    def _tick_path(self, name: str, date_str: str) -> Path:
-        """构建 tick 数据文件路径: data/ticks/{品种}/{交易所}.{代码}/{日期}_{session}.parquet"""
+    def _tick_path(self, name: str, date_str: str, flush_index: int = 0) -> Path:
+        """构建 tick 数据文件路径: data/ticks/{品种}/{交易所}.{代码}/{date}_{session}_{tag}_{NNNN}.parquet
+
+        设计要点：
+        - 每次 flush 写一个新文件（NNNN 递增），不会覆盖历史数据。
+        - tag 默认是启动时刻 HHMMSS，多个进程/多次启动不会互相覆盖。
+        - CSV.gz 后缀会在 ImportError 分支中追加，命名同样带 tag 和序号。
+        """
         exchange, product_code = self.product_info.get(name, ("UNKNOWN", "UNKNOWN"))
         subdir = DATA_DIR / name / f"{exchange}.{product_code}"
         subdir.mkdir(parents=True, exist_ok=True)
         session_label = self._resolve_session()
-        return subdir / f"{date_str}_{session_label}.parquet"
+        fname = f"{date_str}_{session_label}_{self.tag}_{flush_index:04d}.parquet"
+        return subdir / fname
 
     def _resolve_session(self) -> str:
         """解析当前时段标签: day / night"""
@@ -363,8 +377,14 @@ class TickCollector:
             return "night"
 
     def _flush_all(self):
-        """将所有缓冲区写入磁盘（Parquet 优先，无 pyarrow 时用 CSV.gz）"""
+        """将所有缓冲区写入磁盘（Parquet 优先，无 pyarrow 时用 CSV.gz）
+
+        重要：每次调用都写入独立的新文件（文件名含 tag + flush 序号），
+        不会覆盖任何历史数据。
+        """
         date_str = date.today().isoformat()
+        self._flush_seq += 1
+        flush_index = self._flush_seq
         total_written = 0
         for name, ticks in list(self.buffers.items()):
             if not ticks:
@@ -378,17 +398,17 @@ class TickCollector:
                     df["datetime"] = pd.to_datetime(df["datetime"], unit="ns")
                 # 尝试 Parquet，失败则用 CSV.gz
                 try:
-                    fpath = self._tick_path(name, date_str)
+                    fpath = self._tick_path(name, date_str, flush_index=flush_index)
                     df.to_parquet(fpath, index=False)
                 except ImportError:
-                    fpath = self._tick_path(name, date_str).with_suffix(".csv.gz")
+                    fpath = self._tick_path(name, date_str, flush_index=flush_index).with_suffix(".csv.gz")
                     df.to_csv(fpath, index=False, compression="gzip")
                 total_written += len(ticks)
                 self.buffers[name] = []
             except Exception as e:
                 print(f"  [ERROR] 写入 {name} 失败: {e}")
         if total_written > 0:
-            print(f"  [FLUSH] 写入 {total_written} 条 tick")
+            print(f"  [FLUSH #{flush_index:04d} | tag={self.tag}] 写入 {total_written} 条 tick")
 
     def _print_stats(self):
         """打印采集统计"""
@@ -691,6 +711,8 @@ def main():
     parser.add_argument("--session", type=str, default="auto",
                         choices=["day", "night", "auto"],
                         help="时段: day=日盘, night=夜盘, auto=自动识别 (默认auto)")
+    parser.add_argument("--tag", type=str, default=None,
+                        help="文件名前缀标签（默认启动时刻HHMMSS）。同一目录多进程/多次启动不会互相覆盖。")
     args = parser.parse_args()
 
     if args.check:
@@ -699,7 +721,7 @@ def main():
         bt_date = date.fromisoformat(args.backtest)
         backtest_mode(bt_date)
     else:
-        collector = TickCollector(duration_minutes=args.duration, session=args.session)
+        collector = TickCollector(duration_minutes=args.duration, session=args.session, tag=args.tag)
         collector.run()
 
 
