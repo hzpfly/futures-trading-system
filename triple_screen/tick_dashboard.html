@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tick数据看板</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: #0a0e17;
+  color: #c9d1d9;
+  min-height:100vh;
+}
+.header {
+  background: linear-gradient(135deg, #141b2d 0%, #1a2332 100%);
+  border-bottom: 1px solid #21262d;
+  padding: 14px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header h1 { font-size: 18px; font-weight: 600; color: #e6edf3; }
+.header h1 span { color: #58a6ff; }
+.header-info { display: flex; gap: 16px; align-items: center; font-size: 12px; color: #8b949e; }
+.header-info .stat { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 3px 10px; }
+.header-info .stat strong { color: #e6edf3; font-size: 15px; }
+
+.controls {
+  padding: 10px 24px;
+  background: #0d1117;
+  border-bottom: 1px solid #21262d;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.btn {
+  padding: 5px 14px; border: 1px solid #30363d; border-radius: 6px;
+  background: #161b22; color: #c9d1d9; font-size: 12px; cursor: pointer; transition: all .15s;
+}
+.btn:hover { background: #1c2128; border-color: #58a6ff; }
+.btn.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.btn.refresh { background: #238636; border-color: #238636; color: #fff; }
+.btn.refresh:hover { background: #2ea043; }
+input[type=text] {
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+  padding: 5px 10px; color: #c9d1d9; font-size: 12px; width: 160px;
+}
+
+.main-content { padding: 14px 24px; }
+
+/* Cards Grid */
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.product-card {
+  background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+  padding: 12px 14px; cursor: pointer; transition: all .15s; position: relative;
+}
+.product-card:hover { border-color: #58a6ff; background: #1c2128; transform: translateY(-1px); }
+.product-card.selected { border-color: #f0883e; background: #1a1e25; }
+.product-card .pname { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 2px; }
+.product-card .pcode { font-size: 10px; color: #484f58; margin-bottom: 6px; }
+.product-card .pprice { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.product-card .pprice.up { color: #f85149; }
+.product-card .pprice.down { color: #3fb950; }
+.product-card .pprice.loading { color: #484f58; font-size: 12px; }
+.product-card .pchange { font-size: 12px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+.product-card .pchange.up { color: #f85149; background: rgba(248,81,73,.1); }
+.product-card .pchange.down { color: #3fb950; background: rgba(63,185,80,.1); }
+.product-card .pchange.flat { color: #8b949e; background: rgba(139,148,158,.1); }
+.product-card .prow { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+.product-card .pmeta { font-size: 10px; color: #484f58; margin-top: 4px; display: flex; gap: 8px; }
+.product-card .badges { display: flex; gap: 3px; margin-top: 4px; }
+.badge { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 600; }
+.badge-day { background: rgba(88,166,255,.15); color: #58a6ff; }
+.badge-night { background: rgba(188,140,255,.15); color: #bc8cff; }
+
+/* Table View */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+thead th {
+  background: #0d1117; padding: 8px 12px; text-align: right;
+  font-weight: 600; color: #8b949e; border-bottom: 1px solid #21262d;
+  white-space: nowrap; position: sticky; top: 0;
+}
+thead th:first-child { text-align: left; }
+tbody td {
+  padding: 6px 12px; border-bottom: 1px solid #161b22;
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+tbody td:first-child { text-align: left; font-weight: 600; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: #1c2128; }
+tbody tr.selected { background: #1a1e25; border-left: 2px solid #f0883e; }
+.price-up { color: #f85149; font-weight: 700; }
+.price-down { color: #3fb950; font-weight: 700; }
+
+/* Detail Panel */
+.detail-panel {
+  background: #161b22; border: 1px solid #21262d; border-radius: 10px;
+  overflow: hidden; margin-bottom: 16px;
+}
+.detail-hd {
+  padding: 14px 18px; background: #0d1117; border-bottom: 1px solid #21262d;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.detail-hd h2 { font-size: 16px; color: #e6edf3; }
+.detail-hd .close { background: none; border: 1px solid #30363d; color: #8b949e;
+  width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center; }
+.detail-hd .close:hover { background: #1c2128; color: #f85149; }
+.detail-tabs { display: flex; background: #0d1117; border-bottom: 1px solid #21262d; }
+.detail-tabs button {
+  padding: 8px 20px; background: none; border: none; border-bottom: 2px solid transparent;
+  color: #8b949e; font-size: 13px; cursor: pointer; transition: all .15s;
+}
+.detail-tabs button:hover { color: #c9d1d9; }
+.detail-tabs button.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+.detail-tabs button:disabled { color: #30363d; cursor: not-allowed; }
+.detail-stats {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px; padding: 14px 18px;
+}
+.stat-box { background: #0d1117; border-radius: 6px; padding: 8px 12px; }
+.stat-box .label { font-size: 10px; color: #484f58; margin-bottom: 2px; }
+.stat-box .value { font-size: 14px; font-weight: 600; color: #e6edf3; }
+.stat-box .value.up { color: #f85149; }
+.stat-box .value.down { color: #3fb950; }
+.chart-wrap { padding: 0 18px 14px; }
+.chart-inner { width: 100%; height: 400px; background: #0d1117; border-radius: 8px; }
+
+.loading { display: flex; align-items: center; justify-content: center; padding: 30px; color: #8b949e; }
+.loading::before {
+  content: ''; width: 16px; height: 16px; border: 2px solid #30363d;
+  border-top-color: #58a6ff; border-radius: 50%; animation: spin .6s linear infinite; margin-right: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.empty { text-align: center; padding: 40px; color: #484f58; }
+
+.footer { text-align: center; padding: 12px; color: #21262d; font-size: 10px; border-top: 1px solid #161b22; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📊 Tick数据看板 · <span id="hdDate">--</span></h1>
+  <div class="header-info">
+    <span class="stat">品种 <strong id="hdCount">0</strong></span>
+    <span class="stat">日盘 <strong id="hdDay">0</strong></span>
+    <span class="stat">夜盘 <strong id="hdNight">0</strong></span>
+    <button class="btn refresh" onclick="refresh()">🔄 刷新</button>
+  </div>
+</div>
+
+<div class="controls">
+  <input type="text" id="search" placeholder="搜索品种..." oninput="filter()">
+  <label style="font-size:12px;color:#8b949e"><input type="checkbox" id="dayOnly" onchange="filter()"> 仅日盘</label>
+  <label style="font-size:12px;color:#8b949e"><input type="checkbox" id="nightOnly" onchange="filter()"> 仅夜盘</label>
+  <span style="flex:1"></span>
+  <button class="btn active" data-view="cards" onclick="setView('cards')">📇 卡片</button>
+  <button class="btn" data-view="table" onclick="setView('table')">📋 表格</button>
+</div>
+
+<div class="main-content">
+  <div id="detailPanel" class="detail-panel" style="display:none"></div>
+  <div id="cardsView" class="cards-grid"></div>
+  <div id="tableView" class="table-wrap" style="display:none"></div>
+</div>
+
+<div class="footer">数据源: TqSdk 实时采集 | Esc 关闭详情</div>
+
+<script>
+let products = {};
+let currentView = 'cards';
+let selected = null;
+let selectedSession = 'day';
+let chart = null;
+
+async function api(url) {
+  const r = await fetch(url);
+  return r.ok ? r.json() : null;
+}
+
+async function loadProducts() {
+  const d = await api('/api/products');
+  if (!d) return;
+  products = d.products || {};
+  document.getElementById('hdDate').textContent = d.date || '--';
+  document.getElementById('hdCount').textContent = d.count || 0;
+  let nd=0, nn=0;
+  for (const v of Object.values(products)) { if(v.has_day) nd++; if(v.has_night) nn++; }
+  document.getElementById('hdDay').textContent = nd;
+  document.getElementById('hdNight').textContent = nn;
+  render();
+}
+
+function getFiltered() {
+  const s = document.getElementById('search').value.toLowerCase();
+  const do_ = document.getElementById('dayOnly').checked;
+  const no = document.getElementById('nightOnly').checked;
+  const r = {};
+  for (const [k,v] of Object.entries(products)) {
+    if (s && !k.includes(s)) continue;
+    if (do_ && !v.has_day) continue;
+    if (no && !v.has_night) continue;
+    r[k] = v;
+  }
+  return r;
+}
+
+const PRIORITY = ['棉花','豆粕','玉米','铁矿石','螺纹钢','热卷','沪铜','沪铝','沪锌','沪镍','沪锡','沪铅','黄金','白银','原油'];
+
+function sortProducts(entries) {
+  return entries.sort((a,b) => {
+    const ia = PRIORITY.indexOf(a[0]), ib = PRIORITY.indexOf(b[0]);
+    if (ia>=0 && ib>=0) return ia-ib;
+    if (ia>=0) return -1; if (ib>=0) return 1;
+    return a[0].localeCompare(b[0], 'zh');
+  });
+}
+
+function colorClass(v) { return v > 0 ? 'up' : v < 0 ? 'down' : 'flat'; }
+function fmtP(p) { return p != null ? (typeof p === 'number' ? p.toFixed(0) : p) : '-'; }
+function fmtV(v) { return v >= 10000 ? (v/10000).toFixed(1)+'万' : v >= 1000 ? (v/1000).toFixed(0)+'k' : String(v); }
+
+function render() {
+  const items = sortProducts(Object.entries(getFiltered()));
+  renderCards(items);
+  renderTable(items);
+}
+
+function renderCards(items) {
+  const el = document.getElementById('cardsView');
+  if (!items.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  el.innerHTML = items.map(([name,info]) => `
+    <div class="product-card${selected===name?' selected':''}" onclick="selectProduct('${name}')" id="card-${name}">
+      <div class="pname">${name}</div>
+      <div class="pcode">${info.contract}</div>
+      <div class="prow">
+        <span class="pprice loading" id="price-${name}">加载中</span>
+      </div>
+      <div class="badges">
+        ${info.has_day ? '<span class="badge badge-day">日盘</span>' : ''}
+        ${info.has_night ? '<span class="badge badge-night">夜盘</span>' : ''}
+      </div>
+    </div>
+  `).join('');
+  // 懒加载价格
+  items.forEach(([name,info]) => lazyLoadPrice(name));
+}
+
+function renderTable(items) {
+  const el = document.getElementById('tableView');
+  if (!items.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+  el.innerHTML = `<table><thead><tr>
+    <th>品种</th><th>合约</th><th>最新价</th><th>涨跌%</th><th>日盘文件</th><th>夜盘文件</th>
+  </tr></thead><tbody>
+  ${items.map(([name,info]) => `
+    <tr id="row-${name}" onclick="selectProduct('${name}')" class="${selected===name?'selected':''}">
+      <td>${name}</td><td style="color:#484f58;font-size:11px">${info.contract}</td>
+      <td><span id="tprice-${name}">-</span></td>
+      <td><span id="tchg-${name}">-</span></td>
+      <td>${info.day_files}</td><td>${info.night_files}</td>
+    </tr>
+  `).join('')}
+  </tbody></table>`;
+  items.forEach(([name]) => lazyLoadPrice(name));
+}
+
+async function lazyLoadPrice(name) {
+  const d = await api(`/api/summary/${encodeURIComponent(name)}`);
+  const summary = (d && d.day) ? d.day : (d && d.night ? d.night : null);
+  if (!summary) return;
+
+  const cls = colorClass(summary.change_pct);
+  const chgSign = summary.change_pct > 0 ? '+' : '';
+
+  // Card view
+  const pc = document.getElementById(`price-${name}`);
+  if (pc) {
+    pc.className = 'pprice ' + cls;
+    pc.innerHTML = fmtP(summary.last) + ' <span class="pchange '+cls+'">'+chgSign+summary.change_pct.toFixed(2)+'%</span>';
+  }
+  // Table view
+  const tp = document.getElementById(`tprice-${name}`);
+  if (tp) { tp.className = cls==='up'?'price-up':cls==='down'?'price-down':''; tp.textContent = fmtP(summary.last); }
+  const tc = document.getElementById(`tchg-${name}`);
+  if (tc) { tc.className = cls==='up'?'price-up':cls==='down'?'price-down':''; tc.textContent = chgSign+summary.change_pct.toFixed(2)+'%'; }
+}
+
+async function selectProduct(name) {
+  if (selected === name) { closeDetail(); return; }
+  selected = name;
+  selectedSession = products[name].has_day ? 'day' : 'night';
+
+  // 高亮
+  document.querySelectorAll('.product-card,.selected,tr.selected').forEach(e=>e.classList.remove('selected'));
+  const card = document.getElementById('card-'+name);
+  const row = document.getElementById('row-'+name);
+  if(card) card.classList.add('selected');
+  if(row) row.classList.add('selected');
+
+  const d = await api(`/api/summary/${encodeURIComponent(name)}`);
+  if (!d) return;
+
+  const panel = document.getElementById('detailPanel');
+  const tabs = [];
+  if (products[name].has_day) tabs.push('day');
+  if (products[name].has_night) tabs.push('night');
+  if (!tabs.includes(selectedSession)) selectedSession = tabs[0];
+
+  const s = selectedSession === 'day' ? d.day : d.night;
+  if (!s) return;
+
+  const cls = colorClass(s.change_pct);
+  const chgSign = s.change_pct > 0 ? '+' : '';
+
+  panel.innerHTML = `
+    <div class="detail-hd">
+      <h2>${name} · ${d.contract}</h2>
+      <button class="close" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="detail-tabs">
+      ${tabs.map(t => {
+        const ds = t==='day' ? d.day : d.night;
+        const active = t===selectedSession ? ' active' : '';
+        const disabled = !ds ? ' disabled' : '';
+        const label = t==='day' ? '☀️ 日盘' : '🌙 夜盘';
+        return `<button class="${active}" data-tab="${t}" onclick="switchTab('${t}')"${disabled}>${label}${ds ? ' ('+ds.ticks+' ticks)' : ''}</button>`;
+      }).join('')}
+    </div>
+    <div class="detail-stats" id="detailStats">
+      <div class="stat-box"><div class="label">开盘</div><div class="value">${fmtP(s.open)}</div></div>
+      <div class="stat-box"><div class="label">最高</div><div class="value">${fmtP(s.high)}</div></div>
+      <div class="stat-box"><div class="label">最低</div><div class="value">${fmtP(s.low)}</div></div>
+      <div class="stat-box"><div class="label">最新</div><div class="value ${cls}">${fmtP(s.last)}</div></div>
+      <div class="stat-box"><div class="label">涨跌</div><div class="value ${cls}">${chgSign}${s.change_pct}%</div></div>
+      <div class="stat-box"><div class="label">成交量</div><div class="value">${fmtV(s.volume)}</div></div>
+      <div class="stat-box"><div class="label">Tick数</div><div class="value">${s.ticks}</div></div>
+      <div class="stat-box"><div class="label">时间段</div><div class="value" style="font-size:11px">${(s.time_start||'').slice(11,19)} ~ ${(s.time_end||'').slice(11,19)}</div></div>
+    </div>
+    <div class="chart-wrap"><div class="chart-inner" id="tickChart"><div class="loading">加载图表...</div></div></div>`;
+
+  panel.style.display = 'block';
+  panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+  loadChart(selectedSession);
+}
+
+function closeDetail() {
+  selected = null;
+  if (chart) { chart.dispose(); chart = null; }
+  document.getElementById('detailPanel').style.display = 'none';
+  document.querySelectorAll('.selected').forEach(e=>e.classList.remove('selected'));
+}
+
+async function switchTab(tab) {
+  selectedSession = tab;
+  const name = selected;
+  const d = await api(`/api/summary/${encodeURIComponent(name)}`);
+  if (!d) return;
+  const s = tab==='day' ? d.day : d.night;
+  if (!s) return;
+
+  const cls = colorClass(s.change_pct);
+  const chgSign = s.change_pct > 0 ? '+' : '';
+
+  document.querySelectorAll('.detail-tabs button').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.detail-tabs button[data-tab="${tab}"]`)?.classList.add('active');
+
+  document.getElementById('detailStats').innerHTML = `
+    <div class="stat-box"><div class="label">开盘</div><div class="value">${fmtP(s.open)}</div></div>
+    <div class="stat-box"><div class="label">最高</div><div class="value">${fmtP(s.high)}</div></div>
+    <div class="stat-box"><div class="label">最低</div><div class="value">${fmtP(s.low)}</div></div>
+    <div class="stat-box"><div class="label">最新</div><div class="value ${cls}">${fmtP(s.last)}</div></div>
+    <div class="stat-box"><div class="label">涨跌</div><div class="value ${cls}">${chgSign}${s.change_pct}%</div></div>
+    <div class="stat-box"><div class="label">成交量</div><div class="value">${fmtV(s.volume)}</div></div>
+    <div class="stat-box"><div class="label">Tick数</div><div class="value">${s.ticks}</div></div>
+    <div class="stat-box"><div class="label">时间段</div><div class="value" style="font-size:11px">${(s.time_start||'').slice(11,19)} ~ ${(s.time_end||'').slice(11,19)}</div></div>`;
+
+  loadChart(tab);
+}
+
+async function loadChart(session) {
+  const name = selected;
+  const container = document.getElementById('tickChart');
+  container.innerHTML = '<div class="loading">加载图表...</div>';
+
+  const d = await api(`/api/ticks/${encodeURIComponent(name)}/${session}`);
+  if (!d || !d.data || !d.data.length) { container.innerHTML = '<div class="empty">暂无tick数据</div>'; return; }
+  if (chart) chart.dispose();
+
+  const times = d.data.map(x => x.time.slice(11,19));
+  const prices = d.data.map(x => x.price);
+  const volumes = d.data.map(x => x.volume);
+  const asks = d.data.map(x => x.ask1);
+  const bids = d.data.map(x => x.bid1);
+  const up = '#f85149', dn = '#3fb950';
+
+  chart = echarts.init(container);
+  chart.setOption({
+    backgroundColor: '#0d1117',
+    textStyle: { color: '#8b949e' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#161b22', borderColor: '#30363d',
+      textStyle: { color: '#c9d1d9', fontSize: 12 },
+      formatter: function(ps) {
+        let h = '<div style="font-weight:600;margin-bottom:4px">'+(d.data[ps[0].dataIndex].time||'')+'</div>';
+        ps.forEach(p => { if(p.seriesName!=='成交量') h += '<div>'+p.marker+' '+p.seriesName+': <strong>'+(p.value!=null?p.value.toFixed(2):'-')+'</strong></div>'; });
+        return h;
+      }
+    },
+    legend: { data: ['最新价','卖一','买一'], bottom: 0, textStyle: { color: '#8b949e' } },
+    grid: [{ left: 60, right: 60, top: 20, height: '55%' }, { left: 60, right: 60, top: '75%', height: '15%' }],
+    xAxis: [
+      { type: 'category', data: times, gridIndex: 0, axisLine: { lineStyle: { color: '#30363d' } },
+        axisTick: { show: false }, axisLabel: { color: '#484f58', fontSize: 10, interval: Math.max(1, Math.floor(times.length/8)) } },
+      { type: 'category', data: times, gridIndex: 1, axisLine: { lineStyle: { color: '#30363d' } },
+        axisTick: { show: false }, axisLabel: { show: false } },
+    ],
+    yAxis: [
+      { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#161b22' } },
+        axisLabel: { color: '#8b949e', fontSize: 11 } },
+      { type: 'value', gridIndex: 1, splitLine: { show: false }, axisLabel: { show: false } },
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0,1], zoomOnMouseWheel: true },
+      { type: 'slider', xAxisIndex: [0,1], bottom: 30, height: 18,
+        borderColor: '#30363d', backgroundColor: '#161b22',
+        fillerColor: 'rgba(88,166,255,.1)', textStyle: { color: '#8b949e' } },
+    ],
+    series: [
+      { name: '最新价', type: 'line', data: prices, smooth: false, symbol: 'none',
+        lineStyle: { width: 1.5, color: '#58a6ff' },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[
+          {offset:0,color:'rgba(88,166,255,.15)'},{offset:1,color:'rgba(88,166,255,0)'}]) } },
+      { name: '卖一', type: 'line', data: asks, smooth: false, symbol: 'none',
+        lineStyle: { width: 0.8, color: up, type: 'dashed' } },
+      { name: '买一', type: 'line', data: bids, smooth: false, symbol: 'none',
+        lineStyle: { width: 0.8, color: dn, type: 'dashed' } },
+      { name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes,
+        itemStyle: { color: function(p) {
+          const i = p.dataIndex;
+          return (i>0 && prices[i]>=prices[i-1]) || i===0 ? up : dn;
+        }} },
+    ],
+  });
+  window.addEventListener('resize', () => chart && chart.resize());
+}
+
+function setView(v) {
+  currentView = v;
+  document.querySelectorAll('.controls .btn[data-view]').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.controls .btn[data-view="${v}"]`)?.classList.add('active');
+  document.getElementById('cardsView').style.display = v==='cards' ? '' : 'none';
+  document.getElementById('tableView').style.display = v==='table' ? '' : 'none';
+  render();
+}
+
+function filter() { render(); }
+async function refresh() { await api('/api/refresh'); await loadProducts(); }
+
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeDetail(); });
+loadProducts();
+</script>
+</body>
+</html>

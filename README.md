@@ -22,6 +22,8 @@ futures-trading-system/
 │   ├── view_ticks.py               # 命令行Tick数据查看器
 │   ├── maintain_data.py             # Tick数据维护（归档/合并/清理）
 │   ├── maintain_and_clean.sh        # 数据维护一键脚本
+│   ├── tick_dashboard.py           # Tick数据Web看板（Flask后端）
+│   ├── tick_dashboard.html          # Tick数据Web看板（ECharts前端）
 │   ├── c_quote_monitor.py           # 玉米行情实时监控
 │   └── jd_quote_monitor.py          # 鸡蛋行情实时监控
 │
@@ -261,6 +263,18 @@ python triple_screen/fetch_tick_data.py --duration 125 --session night
 Tick 数据保存至 `data/ticks/{品种}/{交易所}.{代码}/` 目录，按日期+时段命名（如 `2026-06-23_day.parquet`）。
 
 ### 查看 Tick 数据
+
+**Web 看板（推荐）：**
+```bash
+python triple_screen/tick_dashboard.py 5070
+# 访问 http://127.0.0.1:5070
+```
+交互式网页看板，61品种数据一览：
+- 卡片/表格双视图，搜索+筛选
+- 点击品种查看日盘/夜盘价格走势图（ECharts 缩放/拖拽）
+- 延迟加载，首页秒开
+
+**命令行：**
 ```bash
 python triple_screen/view_ticks.py              # 列出所有文件摘要
 python triple_screen/view_ticks.py 棉花          # 查看棉花详细数据
