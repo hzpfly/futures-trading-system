@@ -37,6 +37,11 @@ Thumbs.db
 data/kline/
 data/ticks/
 data/archive/
+data/klines/
+data/futures.db
+
+# 备份（可通过脚本重建）
+backups/
 
 # 报告（自动生成，不上传）
 reports/

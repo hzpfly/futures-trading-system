@@ -2,10 +2,24 @@
 
 基于 Alexander Elder 三重滤网（Triple Screen）理论的期货交易系统，覆盖棉花、铁矿石等农产品期货。
 
+**数据引擎**: DuckDB 嵌入式列存储数据库，155MB 单文件替代 17,851 个 Parquet。
+
 ## 项目结构
 
 ```
 futures-trading-system/
+├── core/                         # 核心数据层（DuckDB）
+│   ├── database.py               # DuckDB 连接管理 + 表定义 + SQL 查询
+│   ├── collector.py              # TqSdk → DuckDB Tick 实时采集器
+│   ├── klines.py                 # SQL K线重采样（6周期，100x 快于 pandas）
+│   └── backup.py                 # 数据库备份（gzip → 31MB，可上传 GitHub）
+│
+├── web/                          # Web 看板
+│   └── dashboard.py              # DuckDB 驱动 Web 看板（Flask）
+│
+├── scripts/
+│   └── migrate.py                # 存量 Parquet → DuckDB 迁移工具
+│
 ├── triple_screen/                # 三重滤网策略（六个版本）
 │   ├── triple_screen_optimized.py   # V0: 原始二层版
 │   ├── triple_screen_3layer.py      # V1: 三层版（60分钟精细择时）
@@ -18,11 +32,11 @@ futures-trading-system/
 │   ├── triple_screen_akshare.py     # 初始版本（基础逻辑）
 │   ├── backtest_from_parquet.py     # 基于本地Parquet数据的回测
 │   ├── triple_screen_tqsdk.py      # TqSdk数据源版回测
-│   ├── fetch_tick_data.py           # TqSdk Tick数据实时采集器
+│   ├── fetch_tick_data.py           # TqSdk Tick数据实时采集器（Parquet版）
 │   ├── view_ticks.py               # 命令行Tick数据查看器
 │   ├── maintain_data.py             # Tick数据维护（归档/合并/清理）
 │   ├── maintain_and_clean.sh        # 数据维护一键脚本
-│   ├── tick_dashboard.py           # Tick数据Web看板（Flask后端）
+│   ├── tick_dashboard.py           # Tick数据Web看板（旧版，Flask/文件扫描）
 │   ├── tick_dashboard.html          # Tick数据Web看板（ECharts前端）
 │   ├── c_quote_monitor.py           # 玉米行情实时监控
 │   └── jd_quote_monitor.py          # 鸡蛋行情实时监控
@@ -264,21 +278,52 @@ Tick 数据保存至 `data/ticks/{品种}/{交易所}.{代码}/` 目录，按日
 
 ### 查看 Tick 数据
 
-**Web 看板（推荐）：**
+**Web 看板 — DuckDB 版（推荐）：**
 ```bash
-python triple_screen/tick_dashboard.py 5070
+python -m web.dashboard 5070
 # 访问 http://127.0.0.1:5070
 ```
-交互式网页看板，61品种数据一览：
+DuckDB 驱动，SQL 查询，秒级响应：
+- 61品种日盘+夜盘实时数据
 - 卡片/表格双视图，搜索+筛选
-- 点击品种查看日盘/夜盘价格走势图（ECharts 缩放/拖拽）
-- 延迟加载，首页秒开
+- 点击品种查看价格走势图（ECharts 缩放/拖拽）
+- `/api/klines/棉花/15min` — K线数据 API
+
+**Web 看板 — Parquet 版（旧）：**
+```bash
+python triple_screen/tick_dashboard.py 5070
+```
 
 **命令行：**
 ```bash
 python triple_screen/view_ticks.py              # 列出所有文件摘要
-python triple_screen/view_ticks.py 棉花          # 查看棉花详细数据
-python triple_screen/view_ticks.py --all         # 所有品种汇总
+```
+
+### 数据库操作
+
+```bash
+# 迁移 Parquet → DuckDB
+python scripts/migrate.py                        # 全量迁移
+python scripts/migrate.py --date 2026-06-24      # 单日
+python scripts/migrate.py --product 棉花          # 单品种
+
+# Tick → K线 重采样（SQL，100x 快）
+python -m core.klines                             # 全量
+python -m core.klines --product 棉花               # 单品种
+
+# 备份
+python -m core.backup --local                     # 本地 gzip (155→31MB)
+python -m core.backup --stats                     # 数据库统计
+
+# 回测直接用 DuckDB
+python -c "
+from core.database import DatabaseManager
+db = DatabaseManager()
+# 获取棉花日线数据直接回测
+df = db.get_klines('棉花', 'day')
+# 或获取任意周期
+df_15min = db.get_klines('棉花', '15min')
+"
 ```
 
 ### 维护 Tick 数据
