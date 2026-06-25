@@ -32,7 +32,7 @@ futures-trading-system/
 │   ├── triple_screen_akshare.py     # 初始版本（基础逻辑）
 │   ├── backtest_from_parquet.py     # 基于本地Parquet数据的回测
 │   ├── triple_screen_tqsdk.py      # TqSdk数据源版回测
-│   ├── fetch_tick_data.py           # TqSdk Tick数据实时采集器（Parquet版）
+│   ├── fetch_tick_data.py           # TqSdk Tick数据实时采集器（Parquet旧版）
 │   ├── view_ticks.py               # 命令行Tick数据查看器
 │   ├── maintain_data.py             # Tick数据维护（归档/合并/清理）
 │   ├── maintain_and_clean.sh        # 数据维护一键脚本
@@ -187,8 +187,6 @@ V2 的改进版：**L1 和 L2 均为动力系统**，判断更一致。
 
 > 回测区间：2025-01 ~ 2026-06，品种：棉花主力 CF0，初始资金：100,000 元
 
-> 回测区间：2025-01 ~ 2026-06，品种：棉花主力 CF0，初始资金：100,000 元
-
 | 指标 | V0 原始二层 | V1 三层 | V2 动力系统 | V3 短周期(KD) | V4 双层动力 | V5 短周期动力 |
 |------|------------|--------|-------------|---------------|-------------|-----------------|
 | **收益率** | +7.86% | **+14.03%** 🏆 | +11.69% | -5.04% ❌ | +9.88% | +4.93% |
@@ -231,6 +229,38 @@ V2 的改进版：**L1 和 L2 均为动力系统**，判断更一致。
 pip install -r requirements.txt
 ```
 
+### 采集实时 Tick 数据（DuckDB 版 · 推荐）
+
+```bash
+# 检查 TqSdk 连接和主力合约
+python -m core.collector --check
+
+# 日盘采集（09:05 自动触发，15:00 自动停止）
+python -m core.collector --session day
+
+# 夜盘采集（21:05 自动触发，23:00 自动停止）
+python -m core.collector --session night
+
+# 采集指定时长后自动退出
+python -m core.collector --duration 120
+```
+数据直接写入 `data/futures.db`（DuckDB），无需管理大量 parquet 文件。
+
+### 采集实时 Tick 数据（Parquet 旧版）
+
+```bash
+# 检查连接和主力合约
+python triple_screen/fetch_tick_data.py --check
+
+# 开始采集（按 Ctrl+C 停止）
+python triple_screen/fetch_tick_data.py
+
+# 采集指定时长后自动退出（日盘365分钟 / 夜盘125分钟）
+python triple_screen/fetch_tick_data.py --duration 365 --session day
+python triple_screen/fetch_tick_data.py --duration 125 --session night
+```
+Tick 数据保存至 `data/ticks/{品种}/{交易所}.{代码}/` 目录，按日期+时段命名（如 `2026-06-23_day.parquet`）。
+
 ### 运行回测
 ```bash
 # 运行指定版本
@@ -262,20 +292,6 @@ python futures_strategy/main.py
 # 访问 http://127.0.0.1:5050
 ```
 
-### 采集实时 Tick 数据（交易时段）
-```bash
-# 检查连接和主力合约
-python triple_screen/fetch_tick_data.py --check
-
-# 开始采集（按 Ctrl+C 停止）
-python triple_screen/fetch_tick_data.py
-
-# 采集指定时长后自动退出（日盘365分钟 / 夜盘125分钟）
-python triple_screen/fetch_tick_data.py --duration 365 --session day
-python triple_screen/fetch_tick_data.py --duration 125 --session night
-```
-Tick 数据保存至 `data/ticks/{品种}/{交易所}.{代码}/` 目录，按日期+时段命名（如 `2026-06-23_day.parquet`）。
-
 ### 查看 Tick 数据
 
 **Web 看板 — DuckDB 版（推荐）：**
@@ -299,7 +315,7 @@ python triple_screen/tick_dashboard.py 5070
 python triple_screen/view_ticks.py              # 列出所有文件摘要
 ```
 
-### 数据库操作
+### 数据库操作（DuckDB）
 
 ```bash
 # 迁移 Parquet → DuckDB
@@ -326,7 +342,7 @@ df_15min = db.get_klines('棉花', '15min')
 "
 ```
 
-### 维护 Tick 数据
+### 维护 Tick 数据（Parquet 旧版）
 ```bash
 python triple_screen/maintain_data.py list              # 查看数据状态
 python triple_screen/maintain_data.py merge --age 30  # 合并30天前数据

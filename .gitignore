@@ -39,6 +39,7 @@ data/ticks/
 data/archive/
 data/klines/
 data/futures.db
+data/futures.db.wal
 
 # 备份（可通过脚本重建）
 backups/
